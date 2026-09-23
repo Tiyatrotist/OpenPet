@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <!-- OpenPet Classic WiX Installer Definition -->
+  <Product Id="*"
+           Name="OpenPet"
+           Language="1033"
+           Version="0.1.0"
+           Manufacturer="Tiyatrotist"
+           UpgradeCode="4F2A1234-8ABC-4DEF-9012-3456789ABCDE">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perUser"
+             Description="OpenPet Desktop Companion Platform"
+             Comments="Open-Source Desktop Pet for Windows 11" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of OpenPet is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="ProgramsFolder" Name="Programs">
+          <Directory Id="INSTALLFOLDER" Name="OpenPet">
+            <Component Id="OpenPetHostExecutable" Guid="11111111-2222-3333-4444-555555555551">
+              <File Id="OpenPetHostExe" Source="target\release\openpet-host.exe" KeyPath="yes" />
+            </Component>
+            <Component Id="OpenPetControlExecutable" Guid="11111111-2222-3333-4444-555555555552">
+              <File Id="OpenPetControlExe" Source="target\release\openpet-control.exe" KeyPath="yes">
+                <Shortcut Id="ApplicationStartMenuShortcut"
+                          Directory="ProgramMenuFolder"
+                          Name="OpenPet"
+                          Description="OpenPet Desktop Companion"
+                          WorkingDirectory="INSTALLFOLDER"
+                          Advertise="yes" />
+              </File>
+            </Component>
+            <Component Id="OpenPetPackExecutable" Guid="11111111-2222-3333-4444-555555555553">
+              <File Id="OpenPetPackExe" Source="target\release\openpet-pack.exe" KeyPath="yes" />
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <Feature Id="MainApplication" Title="OpenPet Core" Level="1">
+      <ComponentRef Id="OpenPetHostExecutable" />
+      <ComponentRef Id="OpenPetControlExecutable" />
+      <ComponentRef Id="OpenPetPackExecutable" />
+    </Feature>
+  </Product>
+</Wix>

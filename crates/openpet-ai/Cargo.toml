@@ -1,0 +1,21 @@
+[package]
+name = "openpet-ai"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Normalized AI chat & image provider abstractions, retry engine, and offline contract testing for OpenPet"
+
+[dependencies]
+openpet-types = { workspace = true }
+openpet-secrets = { workspace = true }
+openpet-diagnostics = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+rand = { workspace = true }
+uuid = { workspace = true }

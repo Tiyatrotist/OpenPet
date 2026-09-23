@@ -1,0 +1,47 @@
+name: OpenPet CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  check-format:
+    name: Code Formatting
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Verify formatting
+        run: cargo fmt --check
+
+  clippy-and-test:
+    name: Clippy & Test Suite
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Workspace check
+        run: cargo check --workspace
+
+      - name: Lint with Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run test suite
+        run: cargo test --workspace --verbose

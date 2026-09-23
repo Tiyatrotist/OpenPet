@@ -1,0 +1,15 @@
+[package]
+name = "openpet-screen"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Strict screen privacy boundary, local activity derivation, and zero-capture-when-disabled guarantees for OpenPet"
+
+[dependencies]
+openpet-types = { workspace = true }
+openpet-diagnostics = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }

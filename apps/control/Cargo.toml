@@ -1,0 +1,20 @@
+[package]
+name = "openpet-control"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Control Center desktop interface for OpenPet: configuration, chat, memory, and pet management"
+
+[dependencies]
+openpet-types = { workspace = true }
+openpet-ipc = { workspace = true }
+openpet-i18n = { workspace = true }
+openpet-diagnostics = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }

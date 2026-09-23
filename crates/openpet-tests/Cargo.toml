@@ -1,0 +1,33 @@
+[package]
+name = "openpet-tests"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Comprehensive integration, security, and privacy test suites for OpenPet"
+
+[dependencies]
+openpet-types = { workspace = true }
+openpet-core = { workspace = true }
+openpet-ipc = { workspace = true }
+openpet-behavior = { workspace = true }
+openpet-petpack = { workspace = true }
+openpet-render = { workspace = true }
+openpet-platform-windows = { workspace = true }
+openpet-storage = { workspace = true }
+openpet-secrets = { workspace = true }
+openpet-ai = { workspace = true }
+openpet-memory = { workspace = true }
+openpet-reminders = { workspace = true }
+openpet-generation = { workspace = true }
+openpet-screen = { workspace = true }
+openpet-plugin-api = { workspace = true }
+openpet-plugin-host = { workspace = true }
+openpet-i18n = { workspace = true }
+openpet-diagnostics = { workspace = true }
+tokio = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+tempfile = { workspace = true }
+zip = { workspace = true }

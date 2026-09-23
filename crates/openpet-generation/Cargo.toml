@@ -1,0 +1,19 @@
+[package]
+name = "openpet-generation"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Durable pet generation state machine from user photos (OpenAI, Gemini, ComfyUI) for OpenPet"
+
+[dependencies]
+openpet-types = { workspace = true }
+openpet-ai = { workspace = true }
+openpet-petpack = { workspace = true }
+openpet-diagnostics = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tempfile = { workspace = true }

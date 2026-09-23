@@ -1,0 +1,16 @@
+[package]
+name = "openpet-behavior"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Deterministic utility AI behavior engine, state machine, and interaction engine for OpenPet"
+
+[dependencies]
+openpet-types = { workspace = true }
+openpet-diagnostics = { workspace = true }
+chrono = { workspace = true }
+rand = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }

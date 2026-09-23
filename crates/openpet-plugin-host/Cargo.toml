@@ -1,0 +1,19 @@
+[package]
+name = "openpet-plugin-host"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Sandboxed plugin runtime, capability isolation, and fuel/timeout limits for OpenPet"
+
+[dependencies]
+openpet-types = { workspace = true }
+openpet-plugin-api = { workspace = true }
+openpet-diagnostics = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+std-semaphore = { version = "0.1", optional = true }

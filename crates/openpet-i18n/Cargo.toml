@@ -1,0 +1,13 @@
+[package]
+name = "openpet-i18n"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Internationalization and localization (tr-TR, en-US) for OpenPet"
+
+[dependencies]
+openpet-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

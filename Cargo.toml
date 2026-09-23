@@ -1,0 +1,87 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/openpet-types",
+    "crates/openpet-diagnostics",
+    "crates/openpet-i18n",
+    "crates/openpet-secrets",
+    "crates/openpet-core",
+    "crates/openpet-ipc",
+    "crates/openpet-behavior",
+    "crates/openpet-petpack",
+    "crates/openpet-render",
+    "crates/openpet-platform-windows",
+    "crates/openpet-storage",
+    "crates/openpet-memory",
+    "crates/openpet-reminders",
+    "crates/openpet-ai",
+    "crates/openpet-generation",
+    "crates/openpet-screen",
+    "crates/openpet-plugin-api",
+    "crates/openpet-plugin-host",
+    "crates/openpet-tests",
+    "apps/host",
+    "apps/control",
+    "apps/pack-cli",
+]
+
+[workspace.package]
+version = "0.1.0-alpha.1"
+edition = "2021"
+authors = ["Tiyatrotist <179411334+Tiyatrotist@users.noreply.github.com>"]
+license = "AGPL-3.0-only"
+repository = "https://github.com/Tiyatrotist/OpenPet"
+homepage = "https://github.com/Tiyatrotist/OpenPet"
+readme = "README.md"
+rust-version = "1.80"
+
+[workspace.dependencies]
+# Internal crates
+openpet-types = { path = "crates/openpet-types" }
+openpet-diagnostics = { path = "crates/openpet-diagnostics" }
+openpet-i18n = { path = "crates/openpet-i18n" }
+openpet-secrets = { path = "crates/openpet-secrets" }
+openpet-core = { path = "crates/openpet-core" }
+openpet-ipc = { path = "crates/openpet-ipc" }
+openpet-behavior = { path = "crates/openpet-behavior" }
+openpet-petpack = { path = "crates/openpet-petpack" }
+openpet-render = { path = "crates/openpet-render" }
+openpet-platform-windows = { path = "crates/openpet-platform-windows" }
+openpet-storage = { path = "crates/openpet-storage" }
+openpet-memory = { path = "crates/openpet-memory" }
+openpet-reminders = { path = "crates/openpet-reminders" }
+openpet-ai = { path = "crates/openpet-ai" }
+openpet-generation = { path = "crates/openpet-generation" }
+openpet-screen = { path = "crates/openpet-screen" }
+openpet-plugin-api = { path = "crates/openpet-plugin-api" }
+openpet-plugin-host = { path = "crates/openpet-plugin-host" }
+
+# External dependencies
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.43", features = ["full"] }
+thiserror = "2.0"
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+sha2 = "0.10"
+hex = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+rand = "0.8"
+clap = { version = "4.5", features = ["derive"] }
+async-trait = "0.1"
+zeroize = { version = "1.8", features = ["derive"] }
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_Security_Credentials",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+    "Win32_System_LibraryLoader",
+    "Win32_Graphics_Gdi",
+    "Win32_System_SystemServices",
+] }
+tempfile = "3.16"

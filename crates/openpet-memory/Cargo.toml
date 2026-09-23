@@ -1,0 +1,17 @@
+[package]
+name = "openpet-memory"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Structured memory service, context retrieval, and user-auditable fact store for OpenPet"
+
+[dependencies]
+openpet-types = { workspace = true }
+openpet-storage = { workspace = true }
+openpet-diagnostics = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+std-semaphore = { version = "0.1", optional = true }

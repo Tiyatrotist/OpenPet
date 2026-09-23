@@ -1,0 +1,40 @@
+# Rust / Cargo
+/target/
+**/*.rs.bk
+*.pdb
+*.exe
+Cargo.lock
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating System / Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# OpenPet Local Runtime & Test Artifacts
+data/
+logs/
+staging/
+cache/
+updates/
+*.db
+*.db-shm
+*.db-wal
+*.db.journal
+test_runs/
+local_config.json
+.env
+.env.*
+!.env.example
+
+# Backup & Temp
+*.tmp
+*.bak
+*.orig

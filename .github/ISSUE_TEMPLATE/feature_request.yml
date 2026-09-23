@@ -1,0 +1,18 @@
+name: Feature Request
+description: Propose a new feature, pet interaction, or capability for OpenPet
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Motivation
+      description: Is your feature request related to a problem or desktop use case?
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_solution
+    attributes:
+      label: Proposed Solution
+      description: Describe how the feature should behave and how it respects local-first privacy.
+    validations:
+      required: true

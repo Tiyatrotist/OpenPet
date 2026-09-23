@@ -1,0 +1,17 @@
+[package]
+name = "openpet-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core runtime coordination, event bus, bounded channels, and path management for OpenPet"
+
+[dependencies]
+openpet-types = { workspace = true }
+openpet-diagnostics = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }

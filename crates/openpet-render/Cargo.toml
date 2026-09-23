@@ -1,0 +1,16 @@
+[package]
+name = "openpet-render"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Frame scheduler, sprite atlas loader, hit testing masks, and rendering abstractions for OpenPet"
+
+[dependencies]
+openpet-types = { workspace = true }
+openpet-diagnostics = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }

@@ -1,0 +1,14 @@
+[package]
+name = "openpet-plugin-api"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Stable ABI, semantic pet commands, and host capabilities for OpenPet plugins"
+
+[dependencies]
+openpet-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

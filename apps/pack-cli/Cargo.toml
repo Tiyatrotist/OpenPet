@@ -1,0 +1,20 @@
+[package]
+name = "openpet-pack"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI tool for creating, validating, hashing, inspecting, and signing .openpet packages"
+
+[dependencies]
+openpet-types = { workspace = true }
+openpet-petpack = { workspace = true }
+openpet-diagnostics = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+serde_json = { workspace = true }
+zip = { workspace = true }

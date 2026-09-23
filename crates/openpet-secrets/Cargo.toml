@@ -1,0 +1,18 @@
+[package]
+name = "openpet-secrets"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Secure secret management, zeroizing buffers, and Windows Credential Manager integration for OpenPet"
+
+[dependencies]
+openpet-types = { workspace = true }
+openpet-diagnostics = { workspace = true }
+zeroize = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }

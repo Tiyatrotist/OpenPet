@@ -1,0 +1,30 @@
+[package]
+name = "openpet-host"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core desktop host process for OpenPet: behavior engine, database, reminders, renderer, and IPC server"
+
+[dependencies]
+openpet-types = { workspace = true }
+openpet-core = { workspace = true }
+openpet-ipc = { workspace = true }
+openpet-behavior = { workspace = true }
+openpet-petpack = { workspace = true }
+openpet-render = { workspace = true }
+openpet-platform-windows = { workspace = true }
+openpet-storage = { workspace = true }
+openpet-secrets = { workspace = true }
+openpet-ai = { workspace = true }
+openpet-memory = { workspace = true }
+openpet-reminders = { workspace = true }
+openpet-screen = { workspace = true }
+openpet-plugin-host = { workspace = true }
+openpet-diagnostics = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
