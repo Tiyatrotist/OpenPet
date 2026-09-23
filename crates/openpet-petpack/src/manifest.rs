@@ -44,6 +44,38 @@ pub struct PetPackManifest {
     pub hashes: HashMap<String, String>,
 }
 
+/// Validates that a pet ID is safe against path traversal, reserved devices, and illegal filesystem characters.
+pub fn validate_pet_id(id: &str) -> Result<(), String> {
+    let trimmed = id.trim();
+    if trimmed.is_empty() {
+        return Err("Manifest 'id' cannot be blank".into());
+    }
+    if trimmed.len() > 64 {
+        return Err("Manifest 'id' exceeds maximum length of 64 characters".into());
+    }
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(format!(
+            "Manifest 'id' contains invalid characters: '{}'. Only alphanumeric, '-' and '_' allowed",
+            trimmed
+        ));
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let reserved = [
+        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+    ];
+    if reserved.contains(&lower.as_str()) {
+        return Err(format!(
+            "Manifest 'id' uses reserved Windows device name: '{}'",
+            trimmed
+        ));
+    }
+    Ok(())
+}
+
 impl PetPackManifest {
     /// Validates required fields and guarantees minimum core behavior coverage.
     pub fn validate(&self) -> Result<(), String> {
@@ -54,9 +86,7 @@ impl PetPackManifest {
             ));
         }
 
-        if self.id.trim().is_empty() {
-            return Err("Manifest 'id' cannot be blank".into());
-        }
+        validate_pet_id(&self.id)?;
 
         if self.name.trim().is_empty() {
             return Err("Manifest 'name' cannot be blank".into());

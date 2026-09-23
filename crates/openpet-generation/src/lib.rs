@@ -46,6 +46,14 @@ impl GenerationService {
             if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp") {
                 return Err(GenerationError::UnsupportedFormat(ext));
             }
+
+            if let Ok(meta) = p.metadata() {
+                if meta.len() > MAX_PHOTO_BYTES {
+                    return Err(GenerationError::FileTooLarge(
+                        p.to_string_lossy().to_string(),
+                    ));
+                }
+            }
         }
 
         Ok(())
@@ -127,6 +135,12 @@ mod tests {
         assert!(matches!(
             GenerationService::validate_photos(&[p1, p2, p3, p4]),
             Err(GenerationError::InvalidPhotoCount(4))
+        ));
+
+        let bad_ext = Path::new("test.gif");
+        assert!(matches!(
+            GenerationService::validate_photos(&[bad_ext]),
+            Err(GenerationError::UnsupportedFormat(_))
         ));
     }
 

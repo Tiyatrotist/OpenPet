@@ -133,6 +133,7 @@ pub fn unpack_petpack_securely(
 
     // Pass 2: Extract files safely into destination
     fs::create_dir_all(destination)?;
+    let mut total_actual_extracted: u64 = 0;
 
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
@@ -149,8 +150,22 @@ pub fn unpack_petpack_securely(
             fs::create_dir_all(parent)?;
         }
 
+        // Bounded reading protects against streaming decompression bombs with forged headers
+        let mut limited = (&mut entry).take(MAX_SINGLE_ASSET_SIZE + 1);
         let mut content = Vec::new();
-        entry.read_to_end(&mut content)?;
+        limited.read_to_end(&mut content)?;
+
+        if content.len() as u64 > MAX_SINGLE_ASSET_SIZE {
+            return Err(PetPackError::SingleAssetTooLarge(
+                name,
+                content.len() as u64,
+            ));
+        }
+
+        total_actual_extracted += content.len() as u64;
+        if total_actual_extracted > MAX_UNPACKED_SIZE {
+            return Err(PetPackError::UnpackedSizeExceeded(total_actual_extracted));
+        }
 
         let hash = compute_sha256(&content);
         extracted_file_hashes.push((name.clone(), hash));

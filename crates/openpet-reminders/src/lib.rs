@@ -66,19 +66,25 @@ impl ReminderService {
                 let _ = self.notifier.show_toast(&r.title, &r.body);
                 r.last_fired_at = Some(now);
 
-                // Update schedule based on recurrence
+                // Update schedule based on recurrence, catching up overdue intervals to prevent notification storms
                 match r.recurrence {
                     RecurrenceRule::Once => {
                         r.enabled = false;
                     }
                     RecurrenceRule::Daily => {
-                        r.schedule += Duration::days(1);
+                        while r.schedule <= now {
+                            r.schedule += Duration::days(1);
+                        }
                     }
                     RecurrenceRule::Weekly => {
-                        r.schedule += Duration::weeks(1);
+                        while r.schedule <= now {
+                            r.schedule += Duration::weeks(1);
+                        }
                     }
                     RecurrenceRule::Hourly => {
-                        r.schedule += Duration::hours(1);
+                        while r.schedule <= now {
+                            r.schedule += Duration::hours(1);
+                        }
                     }
                 }
 
@@ -196,5 +202,32 @@ mod tests {
         let list = service.list_reminders().unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].title, "Walk");
+    }
+
+    #[test]
+    fn test_overdue_recurring_reminder_catches_up_past_now() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let service = ReminderService::new(db);
+
+        // Schedule daily reminder 3 days ago (e.g. system was asleep over weekend)
+        let three_days_ago = Utc::now() - Duration::days(3);
+        let reminder = service
+            .schedule_reminder(
+                "Feed fish",
+                "Aquarium",
+                three_days_ago,
+                RecurrenceRule::Daily,
+            )
+            .unwrap();
+
+        let fired = service.evaluate_due_reminders(Utc::now()).unwrap();
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].id, reminder.id);
+        // The new schedule MUST be strictly in the future relative to now!
+        assert!(fired[0].schedule > Utc::now());
+
+        // A subsequent evaluation immediately afterwards should NOT fire again!
+        let second_check = service.evaluate_due_reminders(Utc::now()).unwrap();
+        assert_eq!(second_check.len(), 0);
     }
 }

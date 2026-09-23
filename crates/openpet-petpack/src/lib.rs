@@ -126,4 +126,81 @@ mod tests {
             other => panic!("Expected PathTraversal, got {:?}", other),
         }
     }
+
+    #[test]
+    fn test_malicious_manifest_id_rejected() {
+        assert!(validate_pet_id("good-cat_123").is_ok());
+        assert!(validate_pet_id("../evil").is_err());
+        assert!(validate_pet_id("evil/cat").is_err());
+        assert!(validate_pet_id("evil\\cat").is_err());
+        assert!(validate_pet_id("con").is_err());
+        assert!(validate_pet_id("nul").is_err());
+        assert!(validate_pet_id("").is_err());
+    }
+
+    #[test]
+    fn test_install_petpack_creates_missing_packs_dir() {
+        let temp_src = tempdir().unwrap();
+        let temp_dest = tempdir().unwrap();
+        let temp_staging = tempdir().unwrap();
+
+        let mut animations = HashMap::new();
+        for b in [
+            BehaviorType::Idle.as_str(),
+            BehaviorType::Walk.as_str(),
+            BehaviorType::Sit.as_str(),
+            BehaviorType::Sleep.as_str(),
+        ] {
+            animations.insert(
+                b.to_string(),
+                AnimationSequence {
+                    frames: vec![AtlasFrame {
+                        x: 0,
+                        y: 0,
+                        width: 64,
+                        height: 64,
+                        duration_ms: 100,
+                    }],
+                    loops: true,
+                },
+            );
+        }
+
+        let manifest = PetPackManifest {
+            schema_version: 1,
+            id: "fresh-puppy".to_string(),
+            name: "Fresh Puppy".to_string(),
+            version: "1.0.0".to_string(),
+            author: "Tiyatrotist".to_string(),
+            license: "AGPL-3.0".to_string(),
+            homepage: None,
+            description: "A puppy".to_string(),
+            created_with: None,
+            source_provenance: None,
+            minimum_openpet_version: "0.1.0".to_string(),
+            atlases: vec!["atlas.json".to_string()],
+            animations,
+            behavior_tags: vec!["canine".to_string()],
+            translations: None,
+            sounds: None,
+            hashes: HashMap::new(),
+        };
+
+        let manifest_file = temp_src.path().join("manifest.json");
+        std::fs::write(&manifest_file, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let dummy_atlas = temp_src.path().join("atlas.json");
+        std::fs::write(&dummy_atlas, b"{\"atlas\":true}").unwrap();
+
+        let package_out = temp_dest.path().join("fresh-puppy.openpet");
+        build_petpack(temp_src.path(), &package_out).unwrap();
+
+        // packs_dir intentionally does not exist yet!
+        let packs_dir = temp_dest.path().join("non_existent_packs");
+        assert!(!packs_dir.exists());
+
+        let metadata =
+            install_petpack_atomically(&package_out, &packs_dir, temp_staging.path()).unwrap();
+        assert_eq!(metadata.id.0, "fresh-puppy");
+        assert!(packs_dir.join("fresh-puppy").join("manifest.json").exists());
+    }
 }

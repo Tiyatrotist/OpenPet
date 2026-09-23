@@ -29,7 +29,14 @@ pub fn install_petpack_atomically(
         }
     };
 
+    fs::create_dir_all(packs_dir)?;
+
     let target_pet_dir = packs_dir.join(&manifest.id);
+    if !target_pet_dir.starts_with(packs_dir) {
+        let _ = fs::remove_dir_all(&isolated_stage);
+        return Err(PetPackError::PathTraversal(manifest.id.clone()));
+    }
+
     if target_pet_dir.exists() {
         let _ = fs::remove_dir_all(&target_pet_dir);
     }

@@ -41,7 +41,8 @@ fn test_zip_slip_security_boundary() {
     let options = SimpleFileOptions::default();
 
     // Attempt path traversal payload
-    zip.start_file("../../Windows/System32/calc.exe", options).unwrap();
+    zip.start_file("../../Windows/System32/calc.exe", options)
+        .unwrap();
     zip.write_all(b"payload").unwrap();
     zip.finish().unwrap();
 
@@ -64,7 +65,10 @@ fn test_plugin_least_privilege_and_fault_isolation() {
         loops: 1,
     };
     let res = plugin.submit_command(cmd);
-    assert_eq!(res, Err(PluginError::CapabilityDenied("pet.command".into())));
+    assert_eq!(
+        res,
+        Err(PluginError::CapabilityDenied("pet.command".into()))
+    );
 
     // Exhaust fuel
     plugin.fuel_remaining = 50;
@@ -109,4 +113,33 @@ fn test_secret_string_redaction_and_isolation() {
     assert_eq!(debug_str, "[REDACTED_SECRET]");
     assert!(!display_str.contains("supersecrettoken"));
     assert!(!debug_str.contains("supersecrettoken"));
+}
+
+#[test]
+fn test_privacy_app_exclusion_gate() {
+    let mut manager = ScreenPrivacyManager::new();
+    manager.enable_screen_analysis();
+    manager.add_app_exclusion("1password");
+    manager.add_app_exclusion("keepass");
+
+    // Excluded application window
+    let ctx = manager.evaluate_derived_context("1Password - Vault - Personal");
+    assert_eq!(ctx.activity, openpet_types::ScreenActivity::Idle);
+    // Capture initialization count MUST be zero!
+    assert_eq!(manager.capture_initialization_count(), 0);
+
+    // Non-excluded window should initialize capture
+    let ctx2 = manager.evaluate_derived_context("VS Code - Project.rs");
+    assert_eq!(ctx2.activity, openpet_types::ScreenActivity::Writing);
+    assert_eq!(manager.capture_initialization_count(), 1);
+}
+
+#[test]
+fn test_manifest_id_directory_traversal_rejection() {
+    use openpet_petpack::validate_pet_id;
+    assert!(validate_pet_id("normal_pet-123").is_ok());
+    assert!(validate_pet_id("../../system32").is_err());
+    assert!(validate_pet_id("pet/name").is_err());
+    assert!(validate_pet_id("con").is_err());
+    assert!(validate_pet_id("aux").is_err());
 }

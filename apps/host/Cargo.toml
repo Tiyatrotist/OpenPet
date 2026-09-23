@@ -28,3 +28,4 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
 uuid = { workspace = true }
+async-trait = { workspace = true }

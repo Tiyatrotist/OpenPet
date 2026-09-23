@@ -6,9 +6,10 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use openpet_diagnostics::init_diagnostics;
 use openpet_i18n::I18nManager;
-use openpet_ipc::default_pipe_name;
-use openpet_types::SupportedLocale;
+use openpet_ipc::{default_pipe_name, IpcClient};
+use openpet_types::{IpcRequest, IpcResponse, SupportedLocale};
 use tracing::{info, Level};
+use uuid::Uuid;
 
 #[derive(Parser)]
 #[command(name = "openpet-control")]
@@ -57,6 +58,9 @@ async fn main() -> Result<()> {
     );
     info!("Target host pipe: {}", pipe);
 
+    let mut client = IpcClient::connect(&pipe).await.ok();
+    let is_connected = client.is_some();
+
     match cli.command {
         Some(Commands::Status) | None => {
             println!("==================================================");
@@ -64,33 +68,176 @@ async fn main() -> Result<()> {
             println!("==================================================");
             println!("Host Named Pipe : {}", pipe);
             println!("Active Locale   : {}", locale.as_str());
-            println!("Status          : Host connection ready");
+            println!(
+                "Host Status     : {}",
+                if is_connected {
+                    "ONLINE (Connected via Named Pipe)"
+                } else {
+                    "OFFLINE (Start openpet-host to activate background engine)"
+                }
+            );
+
+            if let Some(ref mut c) = client {
+                if let Ok(IpcResponse::ActivePet(Some(pet))) =
+                    c.request(&IpcRequest::GetActivePet).await
+                {
+                    println!("Active Pet      : {} ({})", pet.name, pet.id);
+                }
+                if let Ok(IpcResponse::PetState(state)) = c.request(&IpcRequest::GetPetState).await
+                {
+                    println!(
+                        "Pet State       : Mood: {:.2}, Energy: {:.2}, Circadian: {:?}",
+                        state.mood, state.energy, state.circadian_phase
+                    );
+                }
+            } else {
+                println!("Active Pet      : mimi-cat (Default)");
+            }
             println!("To see all commands, run: openpet-control --help");
             println!("==================================================");
         }
         Some(Commands::Pets) => {
-            println!("Available Pets:");
-            println!("  * mimi-cat (Default Starter Pet - Included Offline)");
+            println!("--- Available Pets ---");
+            if let Some(ref mut c) = client {
+                match c.request(&IpcRequest::ListPets).await {
+                    Ok(IpcResponse::Pets(pets)) => {
+                        for p in pets {
+                            println!("* {} (ID: {}) by {}", p.name, p.id, p.author);
+                            println!("  Description: {}", p.description);
+                            println!("  License: {}", p.license);
+                        }
+                    }
+                    Ok(resp) => println!("Unexpected host response: {:?}", resp),
+                    Err(e) => println!("Error listing pets from host: {}", e),
+                }
+            } else {
+                println!("  * mimi-cat (Default Starter Pet - Included Offline)");
+                println!(
+                    "    [Notice: Run 'openpet-host' to view all live database installations]"
+                );
+            }
         }
         Some(Commands::Chat { message }) => {
             println!("User: {}", message);
-            println!("Pet: *purrs and wags tail happily*");
+            if let Some(ref mut c) = client {
+                let req = IpcRequest::SendChatMessage {
+                    conversation_id: Uuid::new_v4(),
+                    content: message,
+                };
+                match c.request(&req).await {
+                    Ok(IpcResponse::ChatMessage(chat_msg)) => {
+                        println!("Pet: {}", chat_msg.content);
+                    }
+                    Ok(resp) => println!("Unexpected host response: {:?}", resp),
+                    Err(e) => println!("Error sending chat to host: {}", e),
+                }
+            } else {
+                println!("Pet: *purrs and wags tail happily*");
+                println!("    [Notice: Start 'openpet-host' for live AI and interactive companion responses]");
+            }
         }
         Some(Commands::Reminders) => {
-            println!("Desktop Reminders: [No overdue reminders]");
+            println!("--- Desktop Reminders ---");
+            if let Some(ref mut c) = client {
+                match c.request(&IpcRequest::ListReminders).await {
+                    Ok(IpcResponse::Reminders(rems)) => {
+                        if rems.is_empty() {
+                            println!("No reminders scheduled.");
+                        } else {
+                            for r in rems {
+                                println!(
+                                    "* [{}] {} - Schedule: {} (Recurrence: {:?}, Enabled: {})",
+                                    r.id, r.title, r.schedule, r.recurrence, r.enabled
+                                );
+                            }
+                        }
+                    }
+                    Ok(resp) => println!("Unexpected response: {:?}", resp),
+                    Err(e) => println!("Error querying reminders: {}", e),
+                }
+            } else {
+                println!("Desktop Reminders: [No overdue reminders]");
+                println!("    [Notice: Start 'openpet-host' to view live reminder schedule]");
+            }
         }
         Some(Commands::Memory) => {
-            println!("Memory Facts: [User-auditable local knowledge base]");
+            println!("--- Memory Facts (Knowledge Base) ---");
+            if let Some(ref mut c) = client {
+                match c.request(&IpcRequest::ListMemories).await {
+                    Ok(IpcResponse::Memories(mems)) => {
+                        if mems.is_empty() {
+                            println!("No facts stored yet.");
+                        } else {
+                            for m in mems {
+                                println!(
+                                    "* {} (Confidence: {:.2}, Locked: {})",
+                                    m.display_summary(),
+                                    m.confidence,
+                                    m.user_locked
+                                );
+                            }
+                        }
+                    }
+                    Ok(resp) => println!("Unexpected response: {:?}", resp),
+                    Err(e) => println!("Error querying memories: {}", e),
+                }
+            } else {
+                println!("Memory Facts: [User-auditable local knowledge base]");
+                println!("    [Notice: Start 'openpet-host' to view live memory database]");
+            }
         }
         Some(Commands::Privacy { toggle }) => {
             if toggle {
-                println!("Privacy Mode toggled.");
+                if let Some(ref mut c) = client {
+                    match c.request(&IpcRequest::SetPrivacyMode(true)).await {
+                        Ok(IpcResponse::Ack) => {
+                            println!("SUCCESS: Privacy Mode enabled on OpenPet Host.");
+                        }
+                        Ok(resp) => println!("Unexpected response: {:?}", resp),
+                        Err(e) => println!("Error setting privacy mode on host: {}", e),
+                    }
+                } else {
+                    println!("Privacy Mode toggled (local simulation).");
+                }
+            } else if let Some(ref mut c) = client {
+                if let Ok(IpcResponse::Settings(s)) = c.request(&IpcRequest::GetSettings).await {
+                    println!(
+                        "Screen Analysis: {}",
+                        if s.screen_analysis_enabled {
+                            "Enabled (Opt-in)"
+                        } else {
+                            "Disabled (Zero capture calls)"
+                        }
+                    );
+                    println!(
+                        "Privacy Mode   : {}",
+                        if s.privacy_mode { "ACTIVE" } else { "Inactive" }
+                    );
+                }
             } else {
                 println!("Screen Analysis: Disabled by default (Capture API init count == 0)");
             }
         }
         Some(Commands::Settings) => {
-            println!("Current Settings: [Local-first, AGPL-3.0, Offline Capable]");
+            println!("--- OpenPet Configuration ---");
+            if let Some(ref mut c) = client {
+                match c.request(&IpcRequest::GetSettings).await {
+                    Ok(IpcResponse::Settings(s)) => {
+                        println!("Active Pet ID         : {}", s.active_pet_id);
+                        println!("Locale                : {:?}", s.locale);
+                        println!("Launch On Startup     : {}", s.launch_on_startup);
+                        println!("Always On Top         : {}", s.always_on_top);
+                        println!("Privacy Mode          : {}", s.privacy_mode);
+                        println!("Screen Analysis       : {}", s.screen_analysis_enabled);
+                        println!("Animation Quality     : {:?}", s.animation_quality);
+                    }
+                    Ok(resp) => println!("Unexpected response: {:?}", resp),
+                    Err(e) => println!("Error querying settings: {}", e),
+                }
+            } else {
+                println!("Current Settings: [Local-first, AGPL-3.0, Offline Capable]");
+                println!("    [Notice: Start 'openpet-host' to inspect runtime settings]");
+            }
         }
     }
 

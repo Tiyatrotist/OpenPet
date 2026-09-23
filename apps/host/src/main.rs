@@ -7,7 +7,7 @@ use chrono::Utc;
 use openpet_behavior::BehaviorEngine;
 use openpet_core::AppPaths;
 use openpet_diagnostics::init_diagnostics;
-use openpet_ipc::default_pipe_name;
+use openpet_ipc::{default_pipe_name, IpcServer};
 use openpet_memory::MemoryService;
 use openpet_platform_windows::{enable_per_monitor_dpi_v2, SingleInstanceGuard, SingletonError};
 use openpet_reminders::ReminderService;
@@ -144,6 +144,14 @@ async fn main() -> Result<()> {
     // 9. Host Named Pipe IPC Server Loop
     let pipe_name = default_pipe_name();
     info!("Starting IPC server on named pipe: {}", pipe_name);
+    let state_ipc = state.clone();
+    let shutdown_ipc = shutdown_flag.clone();
+    let pipe_name_clone = pipe_name.clone();
+    tokio::spawn(async move {
+        if let Err(e) = IpcServer::run(pipe_name_clone, state_ipc, shutdown_ipc).await {
+            error!("IPC server error: {}", e);
+        }
+    });
 
     // Run until shutdown signal
     let shutdown_signal = shutdown_flag.clone();
@@ -162,4 +170,147 @@ async fn main() -> Result<()> {
 
     info!("OpenPet Host cleanly terminated.");
     Ok(())
+}
+
+#[async_trait::async_trait]
+impl openpet_ipc::IpcRequestHandler for HostState {
+    async fn handle_request(
+        &self,
+        request: openpet_types::IpcRequest,
+    ) -> openpet_types::IpcResponse {
+        use openpet_ipc::IPC_PROTOCOL_VERSION;
+        use openpet_types::{ChatMessage, IpcRequest, IpcResponse, ServerHello};
+
+        match request {
+            IpcRequest::Handshake(_) => IpcResponse::Handshake(ServerHello {
+                protocol_version: IPC_PROTOCOL_VERSION,
+                host_version: env!("CARGO_PKG_VERSION").to_string(),
+                capabilities: vec![
+                    "pets".into(),
+                    "settings".into(),
+                    "reminders".into(),
+                    "memory".into(),
+                    "chat".into(),
+                    "privacy".into(),
+                ],
+            }),
+            IpcRequest::ListPets => match self.db.list_pets() {
+                Ok(pets) => IpcResponse::Pets(pets),
+                Err(e) => IpcResponse::Error(e.to_string()),
+            },
+            IpcRequest::GetActivePet => {
+                let current_id = self.settings.lock().await.active_pet_id.clone();
+                match self.db.list_pets() {
+                    Ok(pets) => {
+                        let active = pets.into_iter().find(|p| p.id == current_id);
+                        IpcResponse::ActivePet(active)
+                    }
+                    Err(e) => IpcResponse::Error(e.to_string()),
+                }
+            }
+            IpcRequest::SetActivePet(pet_id) => {
+                let mut settings = self.settings.lock().await;
+                settings.active_pet_id = pet_id;
+                let _ = self.db.save_settings(&settings);
+                IpcResponse::Ack
+            }
+            IpcRequest::GetPetState => {
+                let beh = self.behavior.lock().await;
+                IpcResponse::PetState(beh.state().clone())
+            }
+            IpcRequest::InteractPet(interaction) => {
+                let mut beh = self.behavior.lock().await;
+                beh.handle_interaction(interaction);
+                IpcResponse::Ack
+            }
+            IpcRequest::GetSettings => {
+                let settings = self.settings.lock().await;
+                IpcResponse::Settings(settings.clone())
+            }
+            IpcRequest::UpdateSettings(new_settings) => {
+                let mut settings = self.settings.lock().await;
+                *settings = new_settings.clone();
+                let _ = self.db.save_settings(&new_settings);
+                IpcResponse::Ack
+            }
+            IpcRequest::ListMemories => match self.memory.list_all() {
+                Ok(memories) => IpcResponse::Memories(memories),
+                Err(e) => IpcResponse::Error(e.to_string()),
+            },
+            IpcRequest::CreateMemory {
+                subject,
+                predicate,
+                object,
+                confidence,
+            } => match self.memory.remember(subject, predicate, object, confidence) {
+                Ok(_) => IpcResponse::Ack,
+                Err(e) => IpcResponse::Error(e.to_string()),
+            },
+            IpcRequest::DeleteMemory(id) => match self.memory.forget(id) {
+                Ok(_) => IpcResponse::Ack,
+                Err(e) => IpcResponse::Error(e.to_string()),
+            },
+            IpcRequest::SetMemoryLocked { id, locked } => {
+                match self.memory.set_locked(id, locked) {
+                    Ok(_) => IpcResponse::Ack,
+                    Err(e) => IpcResponse::Error(e.to_string()),
+                }
+            }
+            IpcRequest::ListReminders => match self.reminders.list_reminders() {
+                Ok(rems) => IpcResponse::Reminders(rems),
+                Err(e) => IpcResponse::Error(e.to_string()),
+            },
+            IpcRequest::CreateReminder {
+                title,
+                body,
+                schedule_utc,
+                recurrence,
+            } => {
+                match self
+                    .reminders
+                    .schedule_reminder(title, body, schedule_utc, recurrence)
+                {
+                    Ok(_) => IpcResponse::Ack,
+                    Err(e) => IpcResponse::Error(e.to_string()),
+                }
+            }
+            IpcRequest::DeleteReminder(id) => match self.reminders.cancel_reminder(id) {
+                Ok(_) => IpcResponse::Ack,
+                Err(e) => IpcResponse::Error(e.to_string()),
+            },
+            IpcRequest::SetPrivacyMode(active) => {
+                {
+                    let mut screen = self.screen.lock().await;
+                    screen.set_privacy_mode(active);
+                }
+                {
+                    let mut settings = self.settings.lock().await;
+                    settings.privacy_mode = active;
+                    let _ = self.db.save_settings(&settings);
+                }
+                IpcResponse::Ack
+            }
+            IpcRequest::SendChatMessage {
+                conversation_id,
+                content,
+            } => {
+                let mut beh = self.behavior.lock().await;
+                beh.handle_interaction(openpet_types::InteractionType::SingleClick);
+                let response_msg = ChatMessage::assistant(
+                    conversation_id,
+                    format!(
+                        "*meows softly and nudges your hand* I heard: \"{}\"",
+                        content
+                    ),
+                );
+                IpcResponse::ChatMessage(response_msg)
+            }
+            IpcRequest::Ping => IpcResponse::Pong,
+            IpcRequest::Shutdown => {
+                self.shutdown_flag.store(true, Ordering::SeqCst);
+                IpcResponse::Ack
+            }
+            _ => IpcResponse::Ack,
+        }
+    }
 }

@@ -40,7 +40,7 @@ pub fn init_diagnostics(default_level: Level) {
 pub fn redact_sensitive_string(raw: &str) -> String {
     let mut scrubbed = raw.to_string();
 
-    // Redact Bearer tokens
+    // Redact Bearer tokens, API keys, passwords, and secrets
     let patterns = [
         "sk-",
         "Bearer ",
@@ -52,15 +52,24 @@ pub fn redact_sensitive_string(raw: &str) -> String {
     ];
 
     for pat in patterns {
-        if let Some(idx) = scrubbed.find(pat) {
+        let mut search_from = 0;
+        while let Some(rel_idx) = scrubbed[search_from..].find(pat) {
+            let idx = search_from + rel_idx;
             let start = idx + pat.len();
             let end = scrubbed[start..]
-                .find(|c: char| c.is_whitespace() || c == '&' || c == '"' || c == ',')
+                .find(|c: char| c.is_whitespace() || c == '&' || c == '"' || c == ',' || c == ';')
                 .map(|e| start + e)
                 .unwrap_or(scrubbed.len());
 
             if end > start {
                 scrubbed.replace_range(start..end, REDACTED_MARKER);
+                search_from = start + REDACTED_MARKER.len();
+            } else {
+                search_from = start + pat.len();
+            }
+
+            if search_from >= scrubbed.len() {
+                break;
             }
         }
     }
@@ -86,5 +95,20 @@ mod tests {
         let cleaned = redact_sensitive_string(sample);
         assert!(!cleaned.contains("proj-1234567890abcdef"));
         assert!(cleaned.contains(REDACTED_MARKER));
+    }
+
+    #[test]
+    fn test_multiple_secrets_redaction() {
+        let sample = "key1: sk-firstkey123 and key2: sk-secondkey456 in log";
+        let cleaned = redact_sensitive_string(sample);
+        assert!(!cleaned.contains("firstkey123"));
+        assert!(!cleaned.contains("secondkey456"));
+        assert_eq!(
+            cleaned,
+            format!(
+                "key1: sk-{} and key2: sk-{} in log",
+                REDACTED_MARKER, REDACTED_MARKER
+            )
+        );
     }
 }

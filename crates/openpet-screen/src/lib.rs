@@ -83,10 +83,22 @@ impl ScreenPrivacyManager {
             };
         }
 
-        // Initialize capture only if permitted:
+        let title = active_window_title.to_lowercase();
+
+        // Enforce application-based privacy exclusions:
+        for excluded in &self.excluded_process_names {
+            if title.contains(excluded) {
+                return ScreenContext {
+                    activity: ScreenActivity::Idle,
+                    confidence: 1.0,
+                    timestamp: Utc::now(),
+                };
+            }
+        }
+
+        // Initialize capture only if permitted and not excluded:
         self.capture_init_count.fetch_add(1, Ordering::SeqCst);
 
-        let title = active_window_title.to_lowercase();
         let activity = if title.contains("meeting")
             || title.contains("zoom")
             || title.contains("teams")
@@ -155,5 +167,17 @@ mod tests {
         assert_eq!(ctx2.activity, ScreenActivity::Idle);
         // Initialization count must NOT increment while privacy mode is active!
         assert_eq!(manager.capture_initialization_count(), 1);
+    }
+
+    #[test]
+    fn test_excluded_apps_bypass_capture() {
+        let mut manager = ScreenPrivacyManager::new();
+        manager.enable_screen_analysis();
+        manager.add_app_exclusion("keepass");
+
+        let ctx = manager.evaluate_derived_context("KeePass - Database.kdbx");
+        assert_eq!(ctx.activity, ScreenActivity::Idle);
+        // Excluded app must NOT initialize capture!
+        assert_eq!(manager.capture_initialization_count(), 0);
     }
 }

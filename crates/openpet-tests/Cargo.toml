@@ -31,3 +31,4 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 tempfile = { workspace = true }
 zip = { workspace = true }
+async-trait = { workspace = true }
