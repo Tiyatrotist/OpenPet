@@ -274,15 +274,6 @@ async fn main() -> Result<()> {
         while !state_chat.shutdown_flag.load(Ordering::SeqCst) {
             while let Ok(msg) = chat_input_rx.try_recv() {
                 info!("Chat input from floating bubble: {}", msg);
-                let mut beh = state_chat.behavior.lock().await;
-                let _ = beh.handle_interaction(openpet_types::InteractionType::SingleClick);
-                if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
-                    if let Some(ref tx) = *guard {
-                        let _ = tx.send(PetWindowCommand::SetBehavior(
-                            openpet_types::BehaviorType::Curious,
-                        ));
-                    }
-                }
 
                 let is_tr = {
                     let settings = state_chat.settings.lock().await;
@@ -290,15 +281,20 @@ async fn main() -> Result<()> {
                 };
 
                 let lower = msg.to_lowercase();
+                let mut beh = state_chat.behavior.lock().await;
+
                 let reply_text = if is_tr {
                     if lower.contains("balık")
                         || lower.contains("yemek")
                         || lower.contains("mama")
                         || lower.contains("besle")
                     {
-                        let _ = beh.handle_interaction(openpet_types::InteractionType::Feed);
+                        let anim_cmd = beh.handle_interaction(openpet_types::InteractionType::Feed);
                         if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
                             if let Some(ref tx) = *guard {
+                                if let Some(ref cmd) = anim_cmd {
+                                    let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                                }
                                 let _ = tx.send(PetWindowCommand::TriggerAction(
                                     openpet_types::InteractionType::Feed,
                                 ));
@@ -309,9 +305,12 @@ async fn main() -> Result<()> {
                         || lower.contains("top")
                         || lower.contains("yumak")
                     {
-                        let _ = beh.handle_interaction(openpet_types::InteractionType::Play);
+                        let anim_cmd = beh.handle_interaction(openpet_types::InteractionType::Play);
                         if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
                             if let Some(ref tx) = *guard {
+                                if let Some(ref cmd) = anim_cmd {
+                                    let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                                }
                                 let _ = tx.send(PetWindowCommand::TriggerAction(
                                     openpet_types::InteractionType::Play,
                                 ));
@@ -319,15 +318,34 @@ async fn main() -> Result<()> {
                         }
                         "*neşeyle havaya zıplar ve parıldar* Miyav! Yumakla oynamak en sevdiğim şey! ✨🐾".to_string()
                     } else if lower.contains("beşlik") || lower.contains("çak") {
-                        let _ = beh.handle_interaction(openpet_types::InteractionType::HighFive);
+                        let anim_cmd =
+                            beh.handle_interaction(openpet_types::InteractionType::HighFive);
                         if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
                             if let Some(ref tx) = *guard {
+                                if let Some(ref cmd) = anim_cmd {
+                                    let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                                }
                                 let _ = tx.send(PetWindowCommand::TriggerAction(
                                     openpet_types::InteractionType::HighFive,
                                 ));
                             }
                         }
                         "*patisini uzatıp eline çarpar* Çaaak! Harikasın! 🖐️🐾".to_string()
+                    } else if lower.contains("uyan") || lower.contains("kalk") {
+                        if beh.current_behavior() == openpet_types::BehaviorType::Sleep {
+                            let _ =
+                                beh.handle_interaction(openpet_types::InteractionType::SleepToggle);
+                        } else {
+                            beh.set_behavior(openpet_types::BehaviorType::Idle);
+                        }
+                        if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                let _ = tx.send(PetWindowCommand::SetBehavior(
+                                    openpet_types::BehaviorType::Idle,
+                                ));
+                            }
+                        }
+                        "*gözlerini ovuşturup tatlı tatlı esner* Günaydın canım dostum! Ben de uyandım! ☀️🐾".to_string()
                     } else if lower.contains("uyu")
                         || lower.contains("uyku")
                         || lower.contains("yat")
@@ -341,6 +359,32 @@ async fn main() -> Result<()> {
                             }
                         }
                         "*kocaman esneyip yanına kıvrılır* Zzz... İyi geceler tatlı insan... *mırrr* 💤".to_string()
+                    } else if lower.contains("esne") || lower.contains("gerin") {
+                        beh.set_behavior(openpet_types::BehaviorType::Stretch);
+                        if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                let _ = tx.send(PetWindowCommand::PlayAnimation {
+                                    name: "stretch_0".to_string(),
+                                    duration_ticks: 24,
+                                });
+                            }
+                        }
+                        "*ön patilerini uzatıp sırtını gerer* Oohh... Harika bir esneme! 🐾"
+                            .to_string()
+                    } else if lower.contains("şaşır")
+                        || lower.contains("korkut")
+                        || lower.contains("bö")
+                    {
+                        beh.set_behavior(openpet_types::BehaviorType::Surprised);
+                        if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                let _ = tx.send(PetWindowCommand::PlayAnimation {
+                                    name: "surprised_0".to_string(),
+                                    duration_ticks: 20,
+                                });
+                            }
+                        }
+                        "*kuyruğu kabarır ve havaya zıplar* Viyav! Beni şaşırttın! 🙀🐾".to_string()
                     } else if lower.contains("yıkan")
                         || lower.contains("temizlen")
                         || lower.contains("yalan")
@@ -358,11 +402,35 @@ async fn main() -> Result<()> {
                         || lower.contains("selam")
                         || lower.contains("günaydın")
                     {
+                        let _ = beh.handle_interaction(openpet_types::InteractionType::SingleClick);
+                        if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                let _ = tx.send(PetWindowCommand::SetBehavior(
+                                    openpet_types::BehaviorType::Curious,
+                                ));
+                            }
+                        }
                         "*patisini sallayarak sana sürtünür* Miyav! Merhaba canım dostum! Seninle olmak çok güzel! 🐾".to_string()
                     } else if lower.contains("hatırla") || lower.contains("not") {
                         let _ = state_chat.memory.remember("user", "shared_fact", &msg, 0.9);
+                        let _ = beh.handle_interaction(openpet_types::InteractionType::SingleClick);
+                        if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                let _ = tx.send(PetWindowCommand::SetBehavior(
+                                    openpet_types::BehaviorType::Curious,
+                                ));
+                            }
+                        }
                         format!("*kulaklarını dikip başını sallar* Miyav! Bunu hafızama not aldım: \"{}\" 🧠🐾", msg)
                     } else {
+                        let _ = beh.handle_interaction(openpet_types::InteractionType::SingleClick);
+                        if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                let _ = tx.send(PetWindowCommand::SetBehavior(
+                                    openpet_types::BehaviorType::Curious,
+                                ));
+                            }
+                        }
                         format!("*tatlı tatlı sana bakar ve mırıldanır* Meow! (\"{}\" mesajını dinledim!) 🐾", msg)
                     }
                 } else {
@@ -371,9 +439,12 @@ async fn main() -> Result<()> {
                         || lower.contains("treat")
                         || lower.contains("food")
                     {
-                        let _ = beh.handle_interaction(openpet_types::InteractionType::Feed);
+                        let anim_cmd = beh.handle_interaction(openpet_types::InteractionType::Feed);
                         if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
                             if let Some(ref tx) = *guard {
+                                if let Some(ref cmd) = anim_cmd {
+                                    let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                                }
                                 let _ = tx.send(PetWindowCommand::TriggerAction(
                                     openpet_types::InteractionType::Feed,
                                 ));
@@ -384,9 +455,12 @@ async fn main() -> Result<()> {
                         || lower.contains("yarn")
                         || lower.contains("toy")
                     {
-                        let _ = beh.handle_interaction(openpet_types::InteractionType::Play);
+                        let anim_cmd = beh.handle_interaction(openpet_types::InteractionType::Play);
                         if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
                             if let Some(ref tx) = *guard {
+                                if let Some(ref cmd) = anim_cmd {
+                                    let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                                }
                                 let _ = tx.send(PetWindowCommand::TriggerAction(
                                     openpet_types::InteractionType::Play,
                                 ));
@@ -395,9 +469,13 @@ async fn main() -> Result<()> {
                         "*bounces high with sparkles* Meow! Playing with yarn is my favorite! ✨🐾"
                             .to_string()
                     } else if lower.contains("high five") || lower.contains("highfive") {
-                        let _ = beh.handle_interaction(openpet_types::InteractionType::HighFive);
+                        let anim_cmd =
+                            beh.handle_interaction(openpet_types::InteractionType::HighFive);
                         if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
                             if let Some(ref tx) = *guard {
+                                if let Some(ref cmd) = anim_cmd {
+                                    let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                                }
                                 let _ = tx.send(PetWindowCommand::TriggerAction(
                                     openpet_types::InteractionType::HighFive,
                                 ));
@@ -405,6 +483,21 @@ async fn main() -> Result<()> {
                         }
                         "*raises paw and taps your hand* High five! You're awesome! 🖐️🐾"
                             .to_string()
+                    } else if lower.contains("wake") || lower.contains("rise") {
+                        if beh.current_behavior() == openpet_types::BehaviorType::Sleep {
+                            let _ =
+                                beh.handle_interaction(openpet_types::InteractionType::SleepToggle);
+                        } else {
+                            beh.set_behavior(openpet_types::BehaviorType::Idle);
+                        }
+                        if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                let _ = tx.send(PetWindowCommand::SetBehavior(
+                                    openpet_types::BehaviorType::Idle,
+                                ));
+                            }
+                        }
+                        "*rubs eyes and stretches gently* Good morning my friend! I'm wide awake now! ☀️🐾".to_string()
                     } else if lower.contains("sleep")
                         || lower.contains("nap")
                         || lower.contains("bed")
@@ -419,6 +512,31 @@ async fn main() -> Result<()> {
                         }
                         "*yawns widely and curls into a warm ball* Zzz... Sweet dreams... *purr* 💤"
                             .to_string()
+                    } else if lower.contains("stretch") {
+                        beh.set_behavior(openpet_types::BehaviorType::Stretch);
+                        if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                let _ = tx.send(PetWindowCommand::PlayAnimation {
+                                    name: "stretch_0".to_string(),
+                                    duration_ticks: 24,
+                                });
+                            }
+                        }
+                        "*stretches front paws and arches back* Oohh... What a refreshing stretch! 🐾".to_string()
+                    } else if lower.contains("surprise")
+                        || lower.contains("scare")
+                        || lower.contains("boo")
+                    {
+                        beh.set_behavior(openpet_types::BehaviorType::Surprised);
+                        if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                let _ = tx.send(PetWindowCommand::PlayAnimation {
+                                    name: "surprised_0".to_string(),
+                                    duration_ticks: 20,
+                                });
+                            }
+                        }
+                        "*poofs tail and jumps back* Meow! You surprised me! 🙀🐾".to_string()
                     } else if lower.contains("groom")
                         || lower.contains("wash")
                         || lower.contains("clean")
@@ -436,11 +554,35 @@ async fn main() -> Result<()> {
                         || lower.contains("hi")
                         || lower.contains("hey")
                     {
+                        let _ = beh.handle_interaction(openpet_types::InteractionType::SingleClick);
+                        if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                let _ = tx.send(PetWindowCommand::SetBehavior(
+                                    openpet_types::BehaviorType::Curious,
+                                ));
+                            }
+                        }
                         "*nudges your hand affectionately* Meow! Hello best friend! Wonderful to see you! 🐾".to_string()
                     } else if lower.contains("remember") {
                         let _ = state_chat.memory.remember("user", "shared_fact", &msg, 0.9);
+                        let _ = beh.handle_interaction(openpet_types::InteractionType::SingleClick);
+                        if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                let _ = tx.send(PetWindowCommand::SetBehavior(
+                                    openpet_types::BehaviorType::Curious,
+                                ));
+                            }
+                        }
                         format!("*perks ears up* Meow! I'll remember that: \"{}\" 🧠🐾", msg)
                     } else {
+                        let _ = beh.handle_interaction(openpet_types::InteractionType::SingleClick);
+                        if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                let _ = tx.send(PetWindowCommand::SetBehavior(
+                                    openpet_types::BehaviorType::Curious,
+                                ));
+                            }
+                        }
                         format!(
                             "*purrs softly and looks up at you* Meow! (I noted: \"{}\") 🐾",
                             msg

@@ -18,6 +18,8 @@ If Not FSO.FileExists(strHostExe) Then
 End If
 
 If FSO.FileExists(strHostExe) Then
+    ' Set current directory to application root
+    WshShell.CurrentDirectory = strScriptDir
     ' Run completely silent (0 = SW_HIDE, False = don't wait)
     WshShell.Run """" & strHostExe & """", 0, False
 Else

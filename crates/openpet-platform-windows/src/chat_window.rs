@@ -27,6 +27,32 @@ pub struct ChatMessageItem {
     pub is_user: bool,
 }
 
+/// Computes message bubble height based on available vertical space and item count.
+pub fn compute_bubble_height(available_height: i32, display_count: usize) -> i32 {
+    let count = display_count.max(1) as i32;
+    let total_gaps = (count - 1) * 8;
+    ((available_height - total_gaps) / count).clamp(60, 75)
+}
+
+/// Calculates the docked screen position of the chat window relative to the pet.
+pub fn compute_dock_position(
+    pet_pos: (i32, i32),
+    screen_w: i32,
+    screen_h: i32,
+    window_w: i32,
+    window_h: i32,
+) -> (i32, i32) {
+    let dock_x = if pet_pos.0 + 130 + window_w <= screen_w - 20 {
+        pet_pos.0 + 130
+    } else {
+        (pet_pos.0 - window_w - 10).max(10)
+    };
+
+    let max_y = (screen_h - window_h - 40).max(20);
+    let dock_y = (pet_pos.1 - 100).clamp(20, max_y);
+    (dock_x, dock_y)
+}
+
 /// Internal state owned by the floating chat window Win32 message procedure.
 pub struct FloatingChatState {
     pub edit_hwnd: windows_sys::Win32::Foundation::HWND,
@@ -104,22 +130,23 @@ unsafe extern "system" fn chat_window_wndproc(
     use windows_sys::Win32::Foundation::{POINT, RECT};
     use windows_sys::Win32::Graphics::Gdi::{
         BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
-        DrawTextW, EndPaint, FillRect, InvalidateRect, RoundRect, SelectObject, SetBkColor,
-        SetBkMode, SetTextColor, DT_LEFT, DT_NOPREFIX, DT_WORDBREAK, PAINTSTRUCT, SRCCOPY,
-        TRANSPARENT,
+        DrawTextW, EndPaint, FillRect, GetStockObject, InvalidateRect, RoundRect, SelectObject,
+        SetBkColor, SetBkMode, SetTextColor, DT_LEFT, DT_NOPREFIX, DT_WORDBREAK, NULL_PEN,
+        PAINTSTRUCT, SRCCOPY, TRANSPARENT,
     };
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetFocus};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         DefWindowProcW, GetCursorPos, GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW,
         GetWindowTextW, SendMessageW, SetWindowLongPtrW, SetWindowTextW, ShowWindow, GWLP_USERDATA,
-        HTCAPTION, SW_HIDE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLOREDIT, WM_CTLCOLORSTATIC,
-        WM_DESTROY, WM_LBUTTONDOWN, WM_NCLBUTTONDOWN, WM_PAINT,
+        HTCAPTION, SW_HIDE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORBTN, WM_CTLCOLOREDIT,
+        WM_CTLCOLORSTATIC, WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONDOWN, WM_NCLBUTTONDOWN, WM_PAINT,
     };
 
     let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut FloatingChatState;
 
     match msg {
         WM_CREATE => 0,
+        WM_ERASEBKGND => 1,
         WM_PAINT => {
             if !state_ptr.is_null() {
                 let state = &mut *state_ptr;
@@ -130,6 +157,8 @@ unsafe extern "system" fn chat_window_wndproc(
                 // CRITICAL GDI FIX: Must pass screen hdc, not mem_dc (which defaults to 1-bpp monochrome)
                 let mem_bmp = CreateCompatibleBitmap(hdc, CHAT_WINDOW_WIDTH, CHAT_WINDOW_HEIGHT);
                 let old_bmp = SelectObject(mem_dc, mem_bmp);
+                let null_pen = GetStockObject(NULL_PEN);
+                let old_pen = SelectObject(mem_dc, null_pen);
 
                 // 1. Fill base dark acrylic background (#1E1E2E)
                 let bg_rect = RECT {
@@ -209,10 +238,7 @@ unsafe extern "system" fn chat_window_wndproc(
                 let messages_to_show = &state.history[start_idx..];
 
                 // Dynamically allocate bubble height subtracting inter-bubble gaps
-                let display_count = messages_to_show.len().max(1);
-                let total_gaps = ((display_count - 1) as i32) * 8;
-                let bubble_h =
-                    ((available_height - total_gaps) / (display_count as i32)).clamp(60, 75);
+                let bubble_h = compute_bubble_height(available_height, messages_to_show.len());
 
                 for (i, item) in messages_to_show.iter().enumerate() {
                     let top = history_start_y + (i as i32 * (bubble_h + 8));
@@ -368,6 +394,7 @@ unsafe extern "system" fn chat_window_wndproc(
                     SRCCOPY,
                 );
 
+                SelectObject(mem_dc, old_pen);
                 SelectObject(mem_dc, old_bmp);
                 DeleteObject(mem_bmp);
                 DeleteDC(mem_dc);
@@ -398,14 +425,15 @@ unsafe extern "system" fn chat_window_wndproc(
                 // Header bar clicked: initiate native dragging with packed cursor position
                 if (0..CHAT_WINDOW_WIDTH - 36).contains(&rel_x) && (0..36).contains(&rel_y) {
                     ReleaseCapture();
-                    let lp = ((pt.y as u32) << 16 | (pt.x as u32 & 0xFFFF)) as isize;
+                    let lp = (((pt.y as i16 as u16 as u32) << 16) | (pt.x as i16 as u16 as u32))
+                        as isize;
                     SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION as usize, lp);
                     return 0;
                 }
             }
             0
         }
-        WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC => {
+        WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
             if !state_ptr.is_null() {
                 let state = &*state_ptr;
                 let hdc = wparam as windows_sys::Win32::Graphics::Gdi::HDC;
@@ -546,7 +574,7 @@ impl FloatingChatWindow {
                 hInstance: hinstance,
                 hIcon: std::ptr::null_mut(),
                 hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
-                hbrBackground: dark_bg_brush,
+                hbrBackground: std::ptr::null_mut(),
                 lpszMenuName: std::ptr::null(),
                 lpszClassName: class_name.as_ptr(),
                 hIconSm: std::ptr::null_mut(),
@@ -809,16 +837,13 @@ impl FloatingChatWindow {
 
             let screen_w = GetSystemMetrics(SM_CXSCREEN);
             let screen_h = GetSystemMetrics(SM_CYSCREEN);
-
-            // Dock to the right of pet if space permits, otherwise to the left
-            let dock_x = if pet_pos.0 + 130 + CHAT_WINDOW_WIDTH <= screen_w - 20 {
-                pet_pos.0 + 130
-            } else {
-                (pet_pos.0 - CHAT_WINDOW_WIDTH - 10).max(10)
-            };
-
-            // Align vertically slightly above the pet
-            let dock_y = (pet_pos.1 - 100).clamp(20, (screen_h - CHAT_WINDOW_HEIGHT - 40).max(20));
+            let (dock_x, dock_y) = compute_dock_position(
+                pet_pos,
+                screen_w,
+                screen_h,
+                CHAT_WINDOW_WIDTH,
+                CHAT_WINDOW_HEIGHT,
+            );
 
             SetWindowPos(
                 self.hwnd,
@@ -871,5 +896,64 @@ mod tests {
         assert_eq!(item.sender, "Mimi");
         assert_eq!(item.text, "Meow! Hello friend!");
         assert!(!item.is_user);
+    }
+
+    #[test]
+    fn test_compute_bubble_height_dynamic_allocation() {
+        let available_height = 316;
+
+        // 1 message: capped at maximum 75
+        let h1 = compute_bubble_height(available_height, 1);
+        assert_eq!(h1, 75);
+
+        // 2 messages: 316 - 8 = 308 / 2 = 154 -> capped at 75
+        let h2 = compute_bubble_height(available_height, 2);
+        assert_eq!(h2, 75);
+
+        // 3 messages: 316 - 16 = 300 / 3 = 100 -> capped at 75
+        let h3 = compute_bubble_height(available_height, 3);
+        assert_eq!(h3, 75);
+
+        // 4 messages: 316 - 24 = 292 / 4 = 73 -> exactly 73
+        let h4 = compute_bubble_height(available_height, 4);
+        assert_eq!(h4, 73);
+
+        // 5 messages: 316 - 32 = 284 / 5 = 56 -> clamped to minimum 60
+        let h5 = compute_bubble_height(available_height, 5);
+        assert_eq!(h5, 60);
+
+        // Edge case: 0 display count safely handles divide by zero
+        let h0 = compute_bubble_height(available_height, 0);
+        assert_eq!(h0, 75);
+    }
+
+    #[test]
+    fn test_compute_dock_position_boundaries() {
+        let screen_w = 1920;
+        let screen_h = 1080;
+        let win_w = CHAT_WINDOW_WIDTH; // 340
+        let win_h = CHAT_WINDOW_HEIGHT; // 420
+
+        // 1. Center of screen: docks to the right (+130)
+        let (x, y) = compute_dock_position((500, 500), screen_w, screen_h, win_w, win_h);
+        assert_eq!(x, 630);
+        assert_eq!(y, 400);
+
+        // 2. Near right edge: flips to the left of the pet
+        let (x_right, _) = compute_dock_position((1800, 500), screen_w, screen_h, win_w, win_h);
+        assert_eq!(x_right, 1800 - win_w - 10);
+
+        // 3. Near top edge: clamped to at least 20
+        let (_, y_top) = compute_dock_position((500, 50), screen_w, screen_h, win_w, win_h);
+        assert_eq!(y_top, 20);
+
+        // 4. Near bottom edge: clamped to screen_h - win_h - 40 = 620
+        let (_, y_bottom) = compute_dock_position((500, 950), screen_w, screen_h, win_w, win_h);
+        assert_eq!(y_bottom, 620);
+
+        // 5. Headless / Zero resolution edge case: no panic, clamped safely
+        let (x_zero, y_zero) = compute_dock_position((100, 100), 0, 0, win_w, win_h);
+        assert_eq!(x_zero, 10);
+        assert_eq!(y_zero, 20);
     }
 }

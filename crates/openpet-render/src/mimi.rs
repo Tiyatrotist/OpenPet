@@ -244,11 +244,11 @@ impl FrameBuffer {
     pub fn draw_exclamation(&mut self, cx: usize, cy: usize) {
         let color = palette::HEART_RED;
         for dy in 0..6 {
-            self.set_pixel(cx, cy + dy, color);
-            self.set_pixel(cx + 1, cy + dy, color);
+            self.set_pixel(cx, cy.saturating_add(dy), color);
+            self.set_pixel(cx.saturating_add(1), cy.saturating_add(dy), color);
         }
-        self.set_pixel(cx, cy + 8, color);
-        self.set_pixel(cx + 1, cy + 8, color);
+        self.set_pixel(cx, cy.saturating_add(8), color);
+        self.set_pixel(cx.saturating_add(1), cy.saturating_add(8), color);
     }
 }
 
@@ -1034,8 +1034,11 @@ mod tests {
         fb.draw_fish(0, 0, 5);
         fb.draw_sparkle(0, 0);
         fb.draw_crumbs(0, 0);
-        fb.draw_exclamation(0, 0);
         fb.draw_crumbs(32, 32);
         fb.draw_exclamation(32, 32);
+        fb.draw_crumbs(usize::MAX, usize::MAX);
+        fb.draw_sparkle(usize::MAX, usize::MAX);
+        fb.draw_exclamation(usize::MAX, usize::MAX);
+        fb.draw_fish(usize::MAX, usize::MAX, 5);
     }
 }
