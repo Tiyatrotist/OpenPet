@@ -2,12 +2,6 @@
 setlocal enabledelayedexpansion
 title OpenPet Launcher
 
-echo =======================================================
-echo          OpenPet - Desktop Companion Platform         
-echo    Acik Kaynak Masaustu Dostu (Windows 11 x64)       
-echo =======================================================
-echo.
-
 cd /d "%~dp0"
 
 set "TARGET_DIR=%~dp0target\release"
@@ -21,6 +15,11 @@ if not exist "%HOST_EXE%" (
 )
 
 if not exist "%HOST_EXE%" (
+    echo =======================================================
+    echo          OpenPet - Desktop Companion Platform         
+    echo    Acik Kaynak Masaustu Dostu (Windows 11 x64)       
+    echo =======================================================
+    echo.
     echo [OpenPet] Binaries not found. Compiling release build...
     echo [OpenPet] Uygulama derleniyor, lutfen bekleyin...
     cargo build --release
@@ -35,21 +34,18 @@ if not exist "%HOST_EXE%" (
     set "CONTROL_EXE=%TARGET_DIR%\openpet-control.exe"
 )
 
-echo [OpenPet] Starting background host (desktop pet and system tray)...
-echo [OpenPet] Masaustu peti ve sistem tepsisi baslatiliyor...
-powershell -NoProfile -WindowStyle Hidden -Command "Start-Process '%HOST_EXE%' -WindowStyle Hidden"
+rem Launch host silently in the background via VBScript
+if exist "%~dp0OpenPet.vbs" (
+    wscript.exe "%~dp0OpenPet.vbs"
+) else (
+    start "" /b "%HOST_EXE%"
+)
 
-timeout /t 2 /nobreak >nul
+rem If user specifically requested control center via command line flag
+if "%~1"=="--control" (
+    start "" "%CONTROL_EXE%"
+) else if "%~1"=="-c" (
+    start "" "%CONTROL_EXE%"
+)
 
-echo [OpenPet] Launching Graphical Control Center...
-echo [OpenPet] Grafik Kontrol Merkezi aciliyor...
-start "" "%CONTROL_EXE%"
-
-echo.
-echo [OpenPet] OpenPet is now running!
-echo [OpenPet] - Mimi the Cat is floating on your desktop (try dragging or clicking her!)
-echo [OpenPet] - System tray icon is active in your taskbar (right-click for menu)
-echo [OpenPet] - Control Center window is ready for chat, reminders, and settings
-echo.
-timeout /t 3 >nul
 exit /b 0

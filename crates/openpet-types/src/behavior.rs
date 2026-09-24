@@ -90,6 +90,7 @@ pub enum InteractionType {
     HighFive,
     Feed,
     Play,
+    SleepToggle,
 }
 
 /// Screen coordinates representing pet placement.

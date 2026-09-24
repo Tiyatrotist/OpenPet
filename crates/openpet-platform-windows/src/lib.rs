@@ -3,12 +3,14 @@
 //! Windows-specific APIs: Mutex single-instance enforcement, Per-Monitor DPI awareness V2,
 //! toast notifications, and tray integration.
 
+pub mod chat_window;
 pub mod dpi;
 pub mod notification;
 pub mod pet_window;
 pub mod singleton;
 pub mod tray;
 
+pub use chat_window::*;
 pub use dpi::*;
 pub use notification::*;
 pub use pet_window::*;

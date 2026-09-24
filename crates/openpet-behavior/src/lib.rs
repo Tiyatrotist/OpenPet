@@ -198,7 +198,36 @@ impl BehaviorEngine {
                     target_pos: None,
                 })
             }
+            InteractionType::SleepToggle => {
+                if self.current_behavior == BehaviorType::Sleep {
+                    self.current_behavior = BehaviorType::Idle;
+                    self.behavior_elapsed = 0.0;
+                    self.state.sleepiness = 0.1;
+                    Some(AnimationCommand {
+                        behavior: BehaviorType::Idle,
+                        loops: 1,
+                        emote: Some(PetEmote::Music),
+                        target_pos: None,
+                    })
+                } else {
+                    self.current_behavior = BehaviorType::Sleep;
+                    self.behavior_elapsed = 0.0;
+                    self.state.sleepiness = 0.9;
+                    Some(AnimationCommand {
+                        behavior: BehaviorType::Sleep,
+                        loops: 10,
+                        emote: Some(PetEmote::Zzz),
+                        target_pos: None,
+                    })
+                }
+            }
         }
+    }
+
+    /// Explicitly forces a specific behavior mode and resets elapsed duration.
+    pub fn set_behavior(&mut self, behavior: BehaviorType) {
+        self.current_behavior = behavior;
+        self.behavior_elapsed = 0.0;
     }
 
     /// Computes the utility score for a given candidate behavior given current PetState.
@@ -388,5 +417,26 @@ mod tests {
             assert_eq!(cmd1, cmd2);
             assert_eq!(engine1.state(), engine2.state());
         }
+    }
+
+    #[test]
+    fn test_sleep_toggle_and_stat_adjustments() {
+        let mut engine = BehaviorEngine::new_with_seed(123);
+        assert_ne!(engine.current_behavior(), BehaviorType::Sleep);
+
+        // Toggle sleep on
+        let cmd = engine.handle_interaction(InteractionType::SleepToggle);
+        assert_eq!(cmd.unwrap().behavior, BehaviorType::Sleep);
+        assert_eq!(engine.current_behavior(), BehaviorType::Sleep);
+
+        // Toggle sleep off (wake)
+        let cmd2 = engine.handle_interaction(InteractionType::SleepToggle);
+        assert_eq!(cmd2.unwrap().behavior, BehaviorType::Idle);
+        assert_eq!(engine.current_behavior(), BehaviorType::Idle);
+
+        // Feed adjusts energy and mood
+        let initial_energy = engine.state().energy;
+        engine.handle_interaction(InteractionType::Feed);
+        assert!(engine.state().energy >= initial_energy);
     }
 }

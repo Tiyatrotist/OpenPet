@@ -32,6 +32,8 @@ pub mod palette {
     pub const HEART_RED: [u8; 4] = [255, 45, 95, 255];
     pub const ZZZ_BLUE: [u8; 4] = [80, 190, 255, 255];
     pub const STAR_GOLD: [u8; 4] = [255, 215, 0, 255];
+    pub const FISH_BLUE: [u8; 4] = [70, 160, 240, 255];
+    pub const FISH_LIGHT: [u8; 4] = [130, 200, 255, 255];
 }
 
 /// A 64x64 RGBA pixel buffer representing one animation frame.
@@ -138,9 +140,12 @@ impl FrameBuffer {
                                                // Standard algebraic heart curve: (x^2 + y^2 - 1)^3 - x^2 * y^3 <= 0
                 let a = x * x + y * y - 0.7;
                 if a * a * a - x * x * y * y * y <= 0.0 {
-                    let px = (cx as isize + dx) as usize;
-                    let py = (cy as isize + dy) as usize;
-                    self.set_pixel(px, py, palette::HEART_RED);
+                    let px = cx as isize + dx;
+                    let py = cy as isize + dy;
+                    if px >= 0 && px < FRAME_WIDTH as isize && py >= 0 && py < FRAME_HEIGHT as isize
+                    {
+                        self.set_pixel(px as usize, py as usize, palette::HEART_RED);
+                    }
                 }
             }
         }
@@ -162,14 +167,88 @@ impl FrameBuffer {
     pub fn draw_sparkle(&mut self, cx: usize, cy: usize) {
         let color = palette::STAR_GOLD;
         self.set_pixel(cx, cy, color);
-        self.set_pixel(cx + 1, cy, color);
-        self.set_pixel(cx - 1, cy, color);
-        self.set_pixel(cx, cy + 1, color);
-        self.set_pixel(cx, cy - 1, color);
-        self.set_pixel(cx + 2, cy, color);
-        self.set_pixel(cx - 2, cy, color);
-        self.set_pixel(cx, cy + 2, color);
-        self.set_pixel(cx, cy - 2, color);
+        self.set_pixel(cx.saturating_add(1), cy, color);
+        if cx > 0 {
+            self.set_pixel(cx - 1, cy, color);
+        }
+        self.set_pixel(cx, cy.saturating_add(1), color);
+        if cy > 0 {
+            self.set_pixel(cx, cy - 1, color);
+        }
+        self.set_pixel(cx.saturating_add(2), cy, color);
+        if cx > 1 {
+            self.set_pixel(cx - 2, cy, color);
+        }
+        self.set_pixel(cx, cy.saturating_add(2), color);
+        if cy > 1 {
+            self.set_pixel(cx, cy - 2, color);
+        }
+    }
+
+    pub fn draw_fish(&mut self, cx: usize, cy: usize, size: usize) {
+        if size == 0 {
+            return;
+        }
+        let s = size as isize;
+        // Body: horizontal ellipse
+        self.draw_ellipse(
+            cx as isize,
+            cy as isize,
+            s,
+            (s / 2).max(2),
+            palette::FISH_BLUE,
+            Some(palette::OUTLINE),
+        );
+        self.draw_ellipse(
+            cx as isize,
+            cy as isize,
+            (s - 2).max(1),
+            ((s / 2).max(2) - 1).max(1),
+            palette::FISH_LIGHT,
+            None,
+        );
+
+        // Tail: triangle pointing away (left side)
+        let tail_x = (cx as isize) - s - 1;
+        for dy in -(s / 2)..=(s / 2) {
+            let len = ((s / 2) - dy.abs()).max(1);
+            for dx in 0..=len {
+                let px = tail_x - dx;
+                let py = (cy as isize) + dy;
+                if px >= 0 && px < FRAME_WIDTH as isize && py >= 0 && py < FRAME_HEIGHT as isize {
+                    self.set_pixel(px as usize, py as usize, palette::FISH_BLUE);
+                }
+            }
+        }
+        // Little fish eye (pupil with glint)
+        let eye_x = (cx as isize) + s / 2;
+        let eye_y = (cy as isize) - 1;
+        if eye_x >= 0 && eye_x < FRAME_WIDTH as isize && eye_y >= 0 && eye_y < FRAME_HEIGHT as isize
+        {
+            self.set_pixel(eye_x as usize, eye_y as usize, palette::EYE_PUPIL);
+            if eye_y > 0 {
+                self.set_pixel(eye_x as usize, (eye_y - 1) as usize, palette::EYE_GLINT);
+            }
+        }
+    }
+
+    pub fn draw_crumbs(&mut self, cx: usize, cy: usize) {
+        let color = palette::DARK_ORANGE;
+        self.set_pixel(cx, cy, color);
+        self.set_pixel(cx.saturating_add(3), cy.saturating_add(2), color);
+        self.set_pixel(cx.saturating_sub(2), cy.saturating_add(3), color);
+        self.set_pixel(cx.saturating_add(2), cy.saturating_sub(2), color);
+        self.set_pixel(cx.saturating_sub(3), cy.saturating_sub(1), color);
+    }
+
+    pub fn draw_exclamation(&mut self, cx: usize, cy: usize) {
+        let color = palette::HEART_RED;
+        for dy in 0..6 {
+            self.set_pixel(cx, cy + dy, color);
+            self.set_pixel(cx + 1, cy + dy, color);
+        }
+        self.set_pixel(cx, cy + 8, color);
+        self.set_pixel(cx + 1, cy + 8, color);
     }
 }
 
@@ -195,6 +274,19 @@ impl MimiSpriteSheet {
         frames.insert("play_1".to_string(), render_mimi_play(1));
         frames.insert("drag_0".to_string(), render_mimi_drag());
         frames.insert("pet_0".to_string(), render_mimi_pet());
+
+        // Enriched animations
+        frames.insert("eat_0".to_string(), render_mimi_eat(0));
+        frames.insert("eat_1".to_string(), render_mimi_eat(1));
+        frames.insert("stretch_0".to_string(), render_mimi_stretch(0));
+        frames.insert("stretch_1".to_string(), render_mimi_stretch(1));
+        frames.insert("curious_0".to_string(), render_mimi_curious(0));
+        frames.insert("curious_1".to_string(), render_mimi_curious(1));
+        frames.insert("jump_0".to_string(), render_mimi_jump(0));
+        frames.insert("jump_1".to_string(), render_mimi_jump(1));
+        frames.insert("groom_0".to_string(), render_mimi_groom(0));
+        frames.insert("groom_1".to_string(), render_mimi_groom(1));
+        frames.insert("surprised_0".to_string(), render_mimi_surprised());
 
         Self { frames }
     }
@@ -561,6 +653,306 @@ fn render_mimi_pet() -> FrameBuffer {
     fb
 }
 
+fn render_mimi_eat(step: usize) -> FrameBuffer {
+    let mut fb = FrameBuffer::new();
+    let cy_head: isize = 25;
+    let cy_body: isize = 43;
+
+    draw_cat_tail(&mut fb, 22, 48, -1);
+    draw_cat_ears(&mut fb, cy_head);
+    draw_cat_body(&mut fb, 32, cy_body);
+
+    if step == 0 {
+        // Looking at fish with delight
+        draw_cat_face(&mut fb, 32, cy_head, true, false);
+        // Left paw resting, right paw touching fish
+        fb.draw_ellipse(26, 54, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_ellipse(38, 52, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+        // Fish treat on the right side
+        fb.draw_fish(48, 52, 5);
+    } else {
+        // Chewing happily with crumbs and a floating heart
+        draw_cat_face(&mut fb, 32, cy_head, false, true);
+        fb.draw_ellipse(27, 54, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_ellipse(37, 54, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_crumbs(44, 50);
+        fb.draw_heart(48, 12, 4);
+    }
+
+    fb
+}
+
+fn render_mimi_stretch(step: usize) -> FrameBuffer {
+    let mut fb = FrameBuffer::new();
+    if step == 0 {
+        // Front paw reach: head down, paws extended far out, back arched down
+        let cy_head: isize = 32;
+        let cy_body: isize = 38;
+
+        draw_cat_tail(&mut fb, 18, 36, -2);
+        draw_cat_ears(&mut fb, cy_head);
+        // Elongated body
+        fb.draw_ellipse(
+            30,
+            cy_body,
+            15,
+            10,
+            palette::ORANGE_FUR,
+            Some(palette::OUTLINE),
+        );
+        fb.draw_ellipse(30, cy_body + 1, 9, 6, palette::WHITE_FUR, None);
+        draw_cat_face(&mut fb, 40, cy_head, false, true);
+
+        // Extended front paws
+        fb.draw_ellipse(50, 52, 5, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_ellipse(46, 54, 5, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+        // Back paws tucked
+        fb.draw_ellipse(18, 48, 4, 4, palette::WHITE_FUR, Some(palette::OUTLINE));
+    } else {
+        // Arching back high up, tail high in the air
+        let cy_head: isize = 26;
+        let cy_body: isize = 34;
+
+        // Tail straight up
+        for y in 0..14 {
+            let ty = (36 - y) as usize;
+            fb.set_pixel(20, ty, palette::ORANGE_FUR);
+            fb.set_pixel(21, ty, palette::ORANGE_FUR);
+            if y > 10 {
+                fb.set_pixel(20, ty, palette::WHITE_FUR);
+                fb.set_pixel(21, ty, palette::WHITE_FUR);
+            }
+        }
+
+        draw_cat_ears(&mut fb, cy_head);
+        // Tall arched body
+        fb.draw_ellipse(
+            32,
+            cy_body,
+            12,
+            16,
+            palette::ORANGE_FUR,
+            Some(palette::OUTLINE),
+        );
+        fb.draw_ellipse(32, cy_body, 6, 10, palette::WHITE_FUR, None);
+        draw_cat_face(&mut fb, 34, cy_head, false, true);
+
+        // Paws planted on ground
+        fb.draw_ellipse(24, 54, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_ellipse(40, 54, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+    }
+    fb
+}
+
+fn render_mimi_curious(step: usize) -> FrameBuffer {
+    let mut fb = FrameBuffer::new();
+    let (cx_head, cy_head): (isize, isize) = if step == 0 { (30, 23) } else { (34, 23) };
+    let cy_body: isize = 42;
+
+    draw_cat_tail(&mut fb, 22, 48, if step == 0 { -1 } else { 1 });
+    // Tilted ears
+    if step == 0 {
+        // Left ear slightly lower, right ear upright
+        for y in 0..12 {
+            let w = (12 - y) * 8 / 12;
+            for x in 0..w {
+                let px = 18 - x;
+                let py = (cy_head - 10 + y as isize) as usize;
+                fb.set_pixel(px, py, palette::ORANGE_FUR);
+                if x < w / 2 && y > 3 {
+                    fb.set_pixel(px, py, palette::PINK_EAR);
+                }
+            }
+        }
+        for y in 0..12 {
+            let w = (12 - y) * 8 / 12;
+            for x in 0..w {
+                let px = 41 + x;
+                let py = (cy_head - 14 + y as isize) as usize;
+                fb.set_pixel(px, py, palette::ORANGE_FUR);
+                if x < w / 2 && y > 3 {
+                    fb.set_pixel(px, py, palette::PINK_EAR);
+                }
+            }
+        }
+    } else {
+        draw_cat_ears(&mut fb, cy_head);
+    }
+
+    draw_cat_body(&mut fb, 32, cy_body);
+    draw_cat_face(&mut fb, cx_head, cy_head, true, false);
+
+    // Extra glint in eyes for curiosity
+    fb.set_pixel(
+        (cx_head - 5) as usize,
+        (cy_head + 1) as usize,
+        palette::EYE_GLINT,
+    );
+    fb.set_pixel(
+        (cx_head + 7) as usize,
+        (cy_head + 1) as usize,
+        palette::EYE_GLINT,
+    );
+
+    // Sitting paws
+    fb.draw_ellipse(28, 54, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+    fb.draw_ellipse(36, 54, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+
+    fb
+}
+
+fn render_mimi_jump(step: usize) -> FrameBuffer {
+    let mut fb = FrameBuffer::new();
+    if step == 0 {
+        // Crouch low, preparing vertical leap
+        let cy_head: isize = 30;
+        let cy_body: isize = 45;
+
+        draw_cat_tail(&mut fb, 20, 48, -2);
+        draw_cat_ears(&mut fb, cy_head);
+        draw_cat_body(&mut fb, 32, cy_body);
+        draw_cat_face(&mut fb, 32, cy_head, true, false);
+
+        fb.draw_ellipse(24, 56, 5, 2, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_ellipse(40, 56, 5, 2, palette::WHITE_FUR, Some(palette::OUTLINE));
+    } else {
+        // High vertical bounce with sparkles!
+        let cy_head: isize = 16;
+        let cy_body: isize = 32;
+
+        draw_cat_tail(&mut fb, 22, 38, 0);
+        draw_cat_ears(&mut fb, cy_head);
+        draw_cat_body(&mut fb, 32, cy_body);
+        draw_cat_face(&mut fb, 32, cy_head, true, true);
+
+        // Extended jumping paws
+        fb.draw_ellipse(18, 22, 4, 4, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_ellipse(46, 22, 4, 4, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_ellipse(22, 44, 4, 4, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_ellipse(42, 44, 4, 4, palette::WHITE_FUR, Some(palette::OUTLINE));
+
+        // Multiple golden sparkles
+        fb.draw_sparkle(10, 14);
+        fb.draw_sparkle(54, 10);
+        fb.draw_sparkle(52, 32);
+        fb.draw_sparkle(12, 34);
+    }
+    fb
+}
+
+fn render_mimi_groom(step: usize) -> FrameBuffer {
+    let mut fb = FrameBuffer::new();
+    let cy_head: isize = 24;
+    let cy_body: isize = 42;
+
+    draw_cat_tail(&mut fb, 22, 48, -1);
+    draw_cat_ears(&mut fb, cy_head);
+    draw_cat_body(&mut fb, 32, cy_body);
+
+    if step == 0 {
+        // Raising paw up towards face
+        draw_cat_face(&mut fb, 32, cy_head, true, false);
+        // Right paw on ground, left paw raised to whiskers
+        fb.draw_ellipse(38, 54, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_ellipse(24, 34, 4, 4, palette::WHITE_FUR, Some(palette::OUTLINE));
+    } else {
+        // Rubbing face/ear, happy closed eyes
+        draw_cat_face(&mut fb, 32, cy_head, false, true);
+        fb.draw_ellipse(38, 54, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_ellipse(22, 24, 4, 4, palette::WHITE_FUR, Some(palette::OUTLINE));
+        // Little clean sparkle
+        fb.draw_sparkle(14, 20);
+    }
+
+    fb
+}
+
+fn render_mimi_surprised() -> FrameBuffer {
+    let mut fb = FrameBuffer::new();
+    let cy_head: isize = 20;
+    let cy_body: isize = 36;
+
+    // Poofy wide tail
+    for i in 0..14 {
+        let tx = (22_isize - (i as isize * 10 / 14)) as usize;
+        let ty = (38_isize - (i as isize * 10 / 14)) as usize;
+        let color = if i > 10 {
+            palette::WHITE_FUR
+        } else {
+            palette::ORANGE_FUR
+        };
+        fb.set_pixel(tx, ty, color);
+        fb.set_pixel(tx + 1, ty, color);
+        fb.set_pixel(tx, ty + 1, palette::DARK_ORANGE);
+        if tx > 0 {
+            fb.set_pixel(tx - 1, ty, palette::OUTLINE);
+        }
+    }
+
+    draw_cat_ears(&mut fb, cy_head);
+    draw_cat_body(&mut fb, 32, cy_body);
+
+    // Face with big wide eyes and exclamation
+    // Head shape
+    fb.draw_ellipse(
+        32,
+        cy_head,
+        15,
+        12,
+        palette::CREAM_FUR,
+        Some(palette::OUTLINE),
+    );
+    // Orange forehead patch
+    fb.draw_ellipse(32, cy_head - 6, 9, 5, palette::ORANGE_FUR, None);
+
+    // Large surprised eyes (big white/green with tiny pupils)
+    fb.draw_ellipse(
+        26,
+        cy_head,
+        4,
+        5,
+        palette::WHITE_FUR,
+        Some(palette::OUTLINE),
+    );
+    fb.draw_ellipse(26, cy_head, 3, 4, palette::EYE_GREEN, None);
+    fb.set_pixel(26, cy_head as usize, palette::EYE_PUPIL);
+    fb.set_pixel(25, (cy_head - 1) as usize, palette::EYE_GLINT);
+
+    fb.draw_ellipse(
+        38,
+        cy_head,
+        4,
+        5,
+        palette::WHITE_FUR,
+        Some(palette::OUTLINE),
+    );
+    fb.draw_ellipse(38, cy_head, 3, 4, palette::EYE_GREEN, None);
+    fb.set_pixel(38, cy_head as usize, palette::EYE_PUPIL);
+    fb.set_pixel(37, (cy_head - 1) as usize, palette::EYE_GLINT);
+
+    // Pink nose
+    fb.set_pixel(32, (cy_head + 3) as usize, palette::PINK_NOSE);
+    // Small open mouth 'o'
+    fb.draw_ellipse(32, cy_head + 6, 2, 2, palette::OUTLINE, None);
+
+    // Whiskers
+    for i in 0..4 {
+        fb.set_pixel(18 + i, (cy_head + 3) as usize, palette::OUTLINE);
+        fb.set_pixel(19 + i, (cy_head + 5) as usize, palette::OUTLINE);
+        fb.set_pixel(43 + i, (cy_head + 3) as usize, palette::OUTLINE);
+        fb.set_pixel(42 + i, (cy_head + 5) as usize, palette::OUTLINE);
+    }
+
+    // Paws poised in surprise
+    fb.draw_ellipse(24, 48, 4, 4, palette::WHITE_FUR, Some(palette::OUTLINE));
+    fb.draw_ellipse(40, 48, 4, 4, palette::WHITE_FUR, Some(palette::OUTLINE));
+
+    // Exclamation mark above head
+    fb.draw_exclamation(32, 2);
+
+    fb
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -568,24 +960,49 @@ mod tests {
     #[test]
     fn test_mimi_sprite_sheet_generation() {
         let sheet = MimiSpriteSheet::generate();
-        assert!(sheet.frames.contains_key("idle_0"));
-        assert!(sheet.frames.contains_key("idle_1"));
-        assert!(sheet.frames.contains_key("walk_0"));
-        assert!(sheet.frames.contains_key("sit_0"));
-        assert!(sheet.frames.contains_key("sleep_0"));
-        assert!(sheet.frames.contains_key("play_0"));
-        assert!(sheet.frames.contains_key("drag_0"));
-        assert!(sheet.frames.contains_key("pet_0"));
+        let expected_frames = [
+            "idle_0",
+            "idle_1",
+            "walk_0",
+            "walk_1",
+            "walk_2",
+            "sit_0",
+            "sleep_0",
+            "sleep_1",
+            "play_0",
+            "play_1",
+            "drag_0",
+            "pet_0",
+            // Enriched animations
+            "eat_0",
+            "eat_1",
+            "stretch_0",
+            "stretch_1",
+            "curious_0",
+            "curious_1",
+            "jump_0",
+            "jump_1",
+            "groom_0",
+            "groom_1",
+            "surprised_0",
+        ];
 
-        let frame = sheet.get_frame("idle_0");
-        assert_eq!(frame.pixels.len(), FRAME_BYTES);
+        for frame_name in &expected_frames {
+            assert!(
+                sheet.frames.contains_key(*frame_name),
+                "Missing animation frame: {}",
+                frame_name
+            );
+            let frame = sheet.get_frame(frame_name);
+            assert_eq!(frame.pixels.len(), FRAME_BYTES);
 
-        // Ensure there is actual drawn content (non-transparent pixels)
-        let has_content = frame.pixels.chunks(4).any(|px| px[3] > 0);
-        assert!(
-            has_content,
-            "Frame idle_0 must have non-empty pixel content"
-        );
+            let has_content = frame.pixels.chunks(4).any(|px| px[3] > 0);
+            assert!(
+                has_content,
+                "Frame {} must have non-empty pixel content",
+                frame_name
+            );
+        }
     }
 
     #[test]
@@ -613,5 +1030,12 @@ mod tests {
         fb.draw_ellipse(32, 32, 0, 0, palette::CREAM_FUR, Some(palette::OUTLINE));
         fb.draw_heart(32, 32, 0);
         fb.draw_zzz(32, 32, 0);
+        fb.draw_fish(32, 32, 0);
+        fb.draw_fish(0, 0, 5);
+        fb.draw_sparkle(0, 0);
+        fb.draw_crumbs(0, 0);
+        fb.draw_exclamation(0, 0);
+        fb.draw_crumbs(32, 32);
+        fb.draw_exclamation(32, 32);
     }
 }
