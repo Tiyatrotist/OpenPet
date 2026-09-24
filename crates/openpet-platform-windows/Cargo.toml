@@ -10,6 +10,8 @@ description = "Windows platform integrations: singleton named mutex, DPI v2, tra
 [dependencies]
 openpet-types = { workspace = true }
 openpet-diagnostics = { workspace = true }
+openpet-i18n = { workspace = true }
+openpet-render = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }

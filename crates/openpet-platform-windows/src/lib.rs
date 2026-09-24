@@ -5,10 +5,12 @@
 
 pub mod dpi;
 pub mod notification;
+pub mod pet_window;
 pub mod singleton;
 pub mod tray;
 
 pub use dpi::*;
 pub use notification::*;
+pub use pet_window::*;
 pub use singleton::*;
 pub use tray::*;

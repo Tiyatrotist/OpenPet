@@ -91,13 +91,32 @@ cargo build --workspace
 cargo test --workspace
 ```
 
-### Running OpenPet
+### Running OpenPet (End-User Ready)
+
+For the easiest experience, simply run the launcher:
+```cmd
+# Double click or run from terminal:
+Run-OpenPet.bat
+```
+Or with PowerShell:
 ```powershell
-# Start the background host daemon
+.\Run-OpenPet.ps1
+```
+This automatically starts:
+1. **Interactive Desktop Pet**: Mimi the Cat floats seamlessly on your desktop. Click to pet her, drag her around, or right-click to open actions!
+2. **System Tray Icon**: Lives in your Windows taskbar with a full context menu (Open Control Center, Show/Hide Pet, Privacy Mode, Pause, Settings, Exit).
+3. **Graphical Control Center**: Full Win32 GUI window to check status, chat with Mimi, create desktop reminders, and switch between English and Türkçe!
+
+You can also launch individual components manually:
+```powershell
+# Background host daemon (pet window + system tray)
 cargo run -p openpet-host
 
-# In a separate terminal, launch the Control Center
+# Graphical Control Center
 cargo run -p openpet-control
+
+# Or CLI commands
+cargo run -p openpet-control -- status
 ```
 
 ### Managing Pet Packages

@@ -11,6 +11,8 @@ use openpet_types::{IpcRequest, IpcResponse, SupportedLocale};
 use tracing::{info, Level};
 use uuid::Uuid;
 
+pub mod gui;
+
 #[derive(Parser)]
 #[command(name = "openpet-control")]
 #[command(about = "OpenPet Control Center", long_about = None)]
@@ -18,12 +20,26 @@ struct Cli {
     #[arg(short, long, default_value = "en-US")]
     locale: String,
 
+    /// Force launching in Graphical UI mode
+    #[arg(long)]
+    gui: bool,
+
+    /// Force launching directly into the Settings tab
+    #[arg(long)]
+    settings: bool,
+
+    /// Initial tab to display in GUI (status, chat, reminders, privacy, settings)
+    #[arg(long)]
+    tab: Option<String>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Launch the interactive Graphical Control Center window
+    Gui,
     /// Show current host status and active pet
     Status,
     /// List available installed pets
@@ -43,26 +59,54 @@ enum Commands {
     Settings,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     init_diagnostics(Level::INFO);
     let cli = Cli::parse();
 
     let locale = SupportedLocale::from_str_lenient(&cli.locale);
     let i18n = I18nManager::new(locale);
 
-    let pipe = default_pipe_name();
-    info!(
-        "OpenPet Control Center ({})",
-        i18n.translate("app.subtitle")
-    );
-    info!("Target host pipe: {}", pipe);
+    let initial_tab = if cli.settings {
+        gui::TAB_SETTINGS
+    } else if let Some(ref t) = cli.tab {
+        match t.to_lowercase().as_str() {
+            "chat" => gui::TAB_CHAT,
+            "reminders" | "reminder" => gui::TAB_REMINDERS,
+            "privacy" => gui::TAB_PRIVACY,
+            "settings" | "setting" => gui::TAB_SETTINGS,
+            _ => gui::TAB_STATUS,
+        }
+    } else {
+        gui::TAB_STATUS
+    };
 
-    let mut client = IpcClient::connect(&pipe).await.ok();
-    let is_connected = client.is_some();
+    // If no CLI subcommand is provided, or --gui/--settings/--tab/Commands::Gui is requested, launch the rich GUI window!
+    if cli.command.is_none()
+        || cli.gui
+        || cli.settings
+        || cli.tab.is_some()
+        || matches!(cli.command, Some(Commands::Gui))
+    {
+        info!("Launching OpenPet Graphical Control Center window...");
+        gui::run_control_center_gui(locale, initial_tab);
+        return Ok(());
+    }
 
-    match cli.command {
-        Some(Commands::Status) | None => {
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(async move {
+        let pipe = default_pipe_name();
+        info!(
+            "OpenPet Control Center ({})",
+            i18n.translate("app.subtitle")
+        );
+        info!("Target host pipe: {}", pipe);
+
+        let mut client = IpcClient::connect(&pipe).await.ok();
+        let is_connected = client.is_some();
+
+        match cli.command {
+            Some(Commands::Gui) => unreachable!(),
+            Some(Commands::Status) | None => {
             println!("==================================================");
             println!("               OpenPet Control Center             ");
             println!("==================================================");
@@ -240,6 +284,6 @@ async fn main() -> Result<()> {
             }
         }
     }
-
     Ok(())
+})
 }

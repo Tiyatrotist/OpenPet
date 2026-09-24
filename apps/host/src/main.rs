@@ -9,7 +9,10 @@ use openpet_core::AppPaths;
 use openpet_diagnostics::init_diagnostics;
 use openpet_ipc::{default_pipe_name, IpcServer};
 use openpet_memory::MemoryService;
-use openpet_platform_windows::{enable_per_monitor_dpi_v2, SingleInstanceGuard, SingletonError};
+use openpet_platform_windows::{
+    enable_per_monitor_dpi_v2, spawn_desktop_pet_window, PetWindowCommand, SingleInstanceGuard,
+    SingletonError, TrayAction,
+};
 use openpet_reminders::ReminderService;
 use openpet_render::FrameScheduler;
 use openpet_screen::ScreenPrivacyManager;
@@ -30,6 +33,8 @@ struct HostState {
     screen: Mutex<ScreenPrivacyManager>,
     settings: Mutex<AppSettings>,
     shutdown_flag: Arc<AtomicBool>,
+    pet_paused: Arc<AtomicBool>,
+    pet_cmd_tx: std::sync::Mutex<Option<std::sync::mpsc::Sender<PetWindowCommand>>>,
 }
 
 #[tokio::main]
@@ -79,25 +84,49 @@ async fn main() -> Result<()> {
     // 7. Seed Official Default Pet if Empty
     let pets = db.list_pets()?;
     if pets.is_empty() {
-        let sample = PetMetadata {
-            id: PetId::default_pet(),
-            name: "Mimi the Cat".to_string(),
-            version: "1.0.0".to_string(),
-            author: "Tiyatrotist".to_string(),
-            description: "Default playful companion cat".to_string(),
-            license: "AGPL-3.0".to_string(),
-            homepage: None,
-            created_with: None,
-            source_provenance: Some("OpenPet Official Assets".to_string()),
-            minimum_openpet_version: "0.1.0".to_string(),
-            tags: vec![
-                "feline".to_string(),
-                "cute".to_string(),
-                "starter".to_string(),
-            ],
-        };
-        db.save_pet(&sample)?;
-        info!("Seeded default official pet: {}", sample.name);
+        let official_pack_candidates = [
+            std::path::PathBuf::from("packs/official/mimi-cat.openpet"),
+            paths.root.join("packs/official/mimi-cat.openpet"),
+        ];
+        let mut installed = false;
+        for pack_path in &official_pack_candidates {
+            if pack_path.exists() {
+                if let Ok(meta) = openpet_petpack::install_petpack_atomically(
+                    pack_path,
+                    &paths.packs,
+                    &paths.staging,
+                ) {
+                    let _ = db.save_pet(&meta);
+                    info!(
+                        "Installed official starter pack: {} ({})",
+                        meta.name, meta.id
+                    );
+                    installed = true;
+                    break;
+                }
+            }
+        }
+        if !installed {
+            let sample = PetMetadata {
+                id: PetId::default_pet(),
+                name: "Mimi the Cat".to_string(),
+                version: "1.0.0".to_string(),
+                author: "Tiyatrotist".to_string(),
+                description: "Default playful companion cat".to_string(),
+                license: "AGPL-3.0".to_string(),
+                homepage: None,
+                created_with: None,
+                source_provenance: Some("OpenPet Official Assets".to_string()),
+                minimum_openpet_version: "0.1.0".to_string(),
+                tags: vec![
+                    "feline".to_string(),
+                    "cute".to_string(),
+                    "starter".to_string(),
+                ],
+            };
+            db.save_pet(&sample)?;
+            info!("Seeded default official pet: {}", sample.name);
+        }
     }
 
     let reminders = Arc::new(ReminderService::new(db.clone()));
@@ -105,6 +134,11 @@ async fn main() -> Result<()> {
     let screen = Mutex::new(ScreenPrivacyManager::new());
     let behavior = Mutex::new(BehaviorEngine::new());
     let shutdown_flag = Arc::new(AtomicBool::new(false));
+    let pet_paused = Arc::new(AtomicBool::new(false));
+
+    let (interaction_tx, interaction_rx) = std::sync::mpsc::channel();
+    let (tray_action_tx, tray_action_rx) = std::sync::mpsc::channel();
+    let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
 
     let state = Arc::new(HostState {
         db: db.clone(),
@@ -112,11 +146,25 @@ async fn main() -> Result<()> {
         reminders: reminders.clone(),
         memory: memory.clone(),
         screen,
-        settings: Mutex::new(settings),
+        settings: Mutex::new(settings.clone()),
         shutdown_flag: shutdown_flag.clone(),
+        pet_paused: pet_paused.clone(),
+        pet_cmd_tx: std::sync::Mutex::new(Some(cmd_tx)),
     });
 
-    // 8. Spawn Behavior & Reminder Evaluation Tick Task (10 Hz)
+    // 8. Spawn Native Desktop Pet Window & System Tray on UI thread
+    #[cfg(windows)]
+    let _pet_window_handle = spawn_desktop_pet_window(
+        (0, 0),
+        settings.locale,
+        settings.privacy_mode,
+        interaction_tx,
+        tray_action_tx,
+        cmd_rx,
+        shutdown_flag.clone(),
+    );
+
+    // 9. Spawn Behavior & Reminder Evaluation Tick Task (10 Hz)
     let state_clone = state.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(100));
@@ -125,11 +173,26 @@ async fn main() -> Result<()> {
         while !state_clone.shutdown_flag.load(Ordering::SeqCst) {
             interval.tick().await;
 
+            if state_clone.pet_paused.load(Ordering::SeqCst) {
+                continue;
+            }
+
             // Behavior tick
             {
                 let mut beh = state_clone.behavior.lock().await;
                 if let Some(cmd) = beh.tick(0.1) {
                     scheduler.update_behavior_mode(cmd.behavior, beh.is_dragging());
+                    if let Ok(guard) = state_clone.pet_cmd_tx.lock() {
+                        if let Some(ref tx) = *guard {
+                            let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                            if let Some(pos) = cmd.target_pos {
+                                let _ = tx.send(PetWindowCommand::SetTargetPosition {
+                                    x: pos.x as i32,
+                                    y: pos.y as i32,
+                                });
+                            }
+                        }
+                    }
                 }
             }
 
@@ -139,7 +202,69 @@ async fn main() -> Result<()> {
         }
     });
 
-    info!("Behavior engine and reminder scheduler active.");
+    // 10. Spawn Pet Window Interaction Event Listener
+    let state_interaction = state.clone();
+    tokio::spawn(async move {
+        while !state_interaction.shutdown_flag.load(Ordering::SeqCst) {
+            while let Ok(interaction) = interaction_rx.try_recv() {
+                let mut beh = state_interaction.behavior.lock().await;
+                if let Some(cmd) = beh.handle_interaction(interaction) {
+                    if let Ok(guard) = state_interaction.pet_cmd_tx.lock() {
+                        if let Some(ref tx) = *guard {
+                            let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                        }
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    });
+
+    // 11. Spawn Taskbar System Tray Event Listener
+    let state_tray = state.clone();
+    tokio::spawn(async move {
+        while !state_tray.shutdown_flag.load(Ordering::SeqCst) {
+            while let Ok(action) = tray_action_rx.try_recv() {
+                match action {
+                    TrayAction::OpenControlCenter => {
+                        info!("System Tray: Requesting Control Center focus");
+                    }
+                    TrayAction::OpenSettings => {
+                        info!("System Tray: Requesting Control Center settings");
+                    }
+                    TrayAction::TogglePrivacyMode => {
+                        let mut settings = state_tray.settings.lock().await;
+                        settings.privacy_mode = !settings.privacy_mode;
+                        let priv_mode = settings.privacy_mode;
+                        let _ = state_tray.db.save_settings(&settings);
+                        state_tray.screen.lock().await.set_privacy_mode(priv_mode);
+                        info!("System Tray: Privacy mode updated to: {}", priv_mode);
+                    }
+                    TrayAction::TogglePausePet => {
+                        let prev = state_tray.pet_paused.load(Ordering::SeqCst);
+                        let next = !prev;
+                        state_tray.pet_paused.store(next, Ordering::SeqCst);
+                        info!("System Tray: Pet pause toggled to: {}", next);
+                        if let Ok(guard) = state_tray.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                let _ = tx.send(PetWindowCommand::SetPaused(next));
+                            }
+                        }
+                    }
+                    TrayAction::TogglePetVisibility => {
+                        info!("System Tray: Toggle pet visibility");
+                    }
+                    TrayAction::ExitApplication => {
+                        info!("System Tray: Exit application requested. Initiating graceful shutdown.");
+                        state_tray.shutdown_flag.store(true, Ordering::SeqCst);
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    });
+
+    info!("Behavior engine, desktop pet, system tray, and reminder scheduler active.");
 
     // 9. Host Named Pipe IPC Server Loop
     let pipe_name = default_pipe_name();
@@ -220,7 +345,13 @@ impl openpet_ipc::IpcRequestHandler for HostState {
             }
             IpcRequest::InteractPet(interaction) => {
                 let mut beh = self.behavior.lock().await;
-                beh.handle_interaction(interaction);
+                if let Some(cmd) = beh.handle_interaction(interaction) {
+                    if let Ok(guard) = self.pet_cmd_tx.lock() {
+                        if let Some(ref tx) = *guard {
+                            let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                        }
+                    }
+                }
                 IpcResponse::Ack
             }
             IpcRequest::GetSettings => {
@@ -231,6 +362,13 @@ impl openpet_ipc::IpcRequestHandler for HostState {
                 let mut settings = self.settings.lock().await;
                 *settings = new_settings.clone();
                 let _ = self.db.save_settings(&new_settings);
+                if let Ok(guard) = self.pet_cmd_tx.lock() {
+                    if let Some(ref tx) = *guard {
+                        let _ =
+                            tx.send(PetWindowCommand::SetPrivacyMode(new_settings.privacy_mode));
+                        let _ = tx.send(PetWindowCommand::SetLocale(new_settings.locale));
+                    }
+                }
                 IpcResponse::Ack
             }
             IpcRequest::ListMemories => match self.memory.list_all() {
@@ -288,6 +426,11 @@ impl openpet_ipc::IpcRequestHandler for HostState {
                     settings.privacy_mode = active;
                     let _ = self.db.save_settings(&settings);
                 }
+                if let Ok(guard) = self.pet_cmd_tx.lock() {
+                    if let Some(ref tx) = *guard {
+                        let _ = tx.send(PetWindowCommand::SetPrivacyMode(active));
+                    }
+                }
                 IpcResponse::Ack
             }
             IpcRequest::SendChatMessage {
@@ -295,18 +438,40 @@ impl openpet_ipc::IpcRequestHandler for HostState {
                 content,
             } => {
                 let mut beh = self.behavior.lock().await;
-                beh.handle_interaction(openpet_types::InteractionType::SingleClick);
-                let response_msg = ChatMessage::assistant(
-                    conversation_id,
+                if let Some(cmd) =
+                    beh.handle_interaction(openpet_types::InteractionType::SingleClick)
+                {
+                    if let Ok(guard) = self.pet_cmd_tx.lock() {
+                        if let Some(ref tx) = *guard {
+                            let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                        }
+                    }
+                }
+                let is_tr = {
+                    let settings = self.settings.lock().await;
+                    settings.locale == openpet_types::SupportedLocale::TrTr
+                };
+                let reply_text = if is_tr {
                     format!(
-                        "*meows softly and nudges your hand* I heard: \"{}\"",
+                        "*mırıldanarak sana bakar* Meow! (\"{}\" mesajını duydum!)",
                         content
-                    ),
-                );
+                    )
+                } else {
+                    format!(
+                        "*purrs softly and nudges your hand* Meow! (I heard: \"{}\")",
+                        content
+                    )
+                };
+                let response_msg = ChatMessage::assistant(conversation_id, reply_text);
                 IpcResponse::ChatMessage(response_msg)
             }
             IpcRequest::Ping => IpcResponse::Pong,
             IpcRequest::Shutdown => {
+                if let Ok(guard) = self.pet_cmd_tx.lock() {
+                    if let Some(ref tx) = *guard {
+                        let _ = tx.send(PetWindowCommand::Close);
+                    }
+                }
                 self.shutdown_flag.store(true, Ordering::SeqCst);
                 IpcResponse::Ack
             }
