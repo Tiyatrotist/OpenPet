@@ -16,6 +16,7 @@ pub enum TrayAction {
     TogglePrivacyMode,
     TogglePausePet,
     ToggleArtStyle,
+    Toggle3DDock,
     OpenSettings,
     ExitApplication,
 }
@@ -28,6 +29,7 @@ pub const CMD_PAUSE_PET: usize = 1004;
 pub const CMD_SETTINGS: usize = 1005;
 pub const CMD_EXIT: usize = 1006;
 pub const CMD_TOGGLE_STYLE: usize = 1007;
+pub const CMD_TOGGLE_3D_DOCK: usize = 1008;
 
 /// Custom Windows message for tray callback events
 pub const WM_TRAY_CALLBACK: u32 = 0x8000 + 101; // WM_APP + 101
@@ -216,7 +218,15 @@ impl SystemTray {
             };
             append_item(hmenu, MF_STRING, CMD_TOGGLE_STYLE, style_label);
 
-            // 6. Settings
+            // 6. 3D Chat Dock (Furever Dock)
+            let dock_label = if self.state.locale == SupportedLocale::TrTr {
+                "💬 3D Sohbet Barı (Furever Dock)"
+            } else {
+                "💬 3D Chat Dock (Furever Dock)"
+            };
+            append_item(hmenu, MF_STRING, CMD_TOGGLE_3D_DOCK, dock_label);
+
+            // 7. Settings
             append_item(
                 hmenu,
                 MF_STRING,
@@ -224,7 +234,7 @@ impl SystemTray {
                 i18n.translate("tray.settings"),
             );
 
-            // 7. Exit
+            // 8. Exit
             append_item(hmenu, MF_STRING, CMD_EXIT, i18n.translate("tray.exit"));
 
             SetForegroundWindow(hwnd);
@@ -256,6 +266,7 @@ impl SystemTray {
                 CMD_PRIVACY_MODE => Some(TrayAction::TogglePrivacyMode),
                 CMD_PAUSE_PET => Some(TrayAction::TogglePausePet),
                 CMD_TOGGLE_STYLE => Some(TrayAction::ToggleArtStyle),
+                CMD_TOGGLE_3D_DOCK => Some(TrayAction::Toggle3DDock),
                 CMD_SETTINGS => Some(TrayAction::OpenSettings),
                 CMD_EXIT => Some(TrayAction::ExitApplication),
                 _ => None,

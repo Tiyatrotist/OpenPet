@@ -33,6 +33,7 @@ pub const CMD_PET_HIDE: usize = 3008;
 pub const CMD_PET_SETTINGS: usize = 3009;
 pub const CMD_PET_EXIT: usize = 3010;
 pub const CMD_PET_TOGGLE_STYLE: usize = 3011;
+pub const CMD_PET_3D_DOCK: usize = 3012;
 
 /// Commands that can be dispatched to the active pet window from host threads.
 #[derive(Debug)]
@@ -889,7 +890,18 @@ unsafe fn show_pet_context_menu(
         },
     );
 
-    // 11. ⚙️ Ayarlar (Settings)
+    // 11. 💬 3D Sohbet Barı (Furever Dock)
+    append_item(
+        hmenu,
+        CMD_PET_3D_DOCK,
+        if is_tr {
+            "💬 3D Sohbet Barı (Furever Dock)"
+        } else {
+            "💬 3D Chat Dock (Furever Dock)"
+        },
+    );
+
+    // 12. ⚙️ Ayarlar (Settings)
     append_item(
         hmenu,
         CMD_PET_SETTINGS,
@@ -902,7 +914,7 @@ unsafe fn show_pet_context_menu(
 
     AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
 
-    // 12. ❌ Çıkış (Exit)
+    // 13. ❌ Çıkış (Exit)
     append_item(
         hmenu,
         CMD_PET_EXIT,
@@ -1077,6 +1089,12 @@ unsafe fn show_pet_context_menu(
             }
             InvalidateRect(hwnd, std::ptr::null(), 0);
         }
+        CMD_PET_3D_DOCK => {
+            info!("Pet context menu: Toggling 3D Chat Dock");
+            if let Some(ref tx) = state.tray_action_tx {
+                let _ = tx.send(TrayAction::Toggle3DDock);
+            }
+        }
         CMD_PET_SETTINGS => {
             info!("Pet context menu: Opening settings");
             launch_control_center(&["--settings"]);
@@ -1175,6 +1193,9 @@ fn handle_tray_action(
                     locale: state.locale,
                 });
             }
+        }
+        TrayAction::Toggle3DDock => {
+            info!("TrayAction: Toggle 3D Chat Dock forwarded to host.");
         }
         TrayAction::ExitApplication => {
             info!("Exit requested from tray menu. Terminating pet window and host.");
