@@ -13,10 +13,10 @@
 
 use openpet_i18n::I18nManager;
 use openpet_ipc::{default_pipe_name, IpcClient};
-use openpet_render::MimiSpriteSheet;
+use openpet_render::{MimiSpriteSheet, RealisticCompanionSheet};
 use openpet_types::{
-    AppSettings, CatBreed, IpcRequest, IpcResponse, MemoryFact, PetMetadata, PetState, Reminder,
-    SupportedLocale,
+    AppSettings, CatBreed, CompanionArtStyle, IpcRequest, IpcResponse, MemoryFact, PetMetadata,
+    PetState, Reminder, SupportedLocale,
 };
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
@@ -78,6 +78,7 @@ pub struct ControlCenterState {
     pub runtime_handle: tokio::runtime::Handle,
     pub shutdown_flag: Arc<AtomicBool>,
     pub sprite_sheet: MimiSpriteSheet,
+    pub realistic_sheet: RealisticCompanionSheet,
     pub frame_counter: u32,
 
     // Win32 child control HWNDs
@@ -458,6 +459,40 @@ unsafe extern "system" fn control_center_wndproc(
                 // 2. Tab-specific interactive button hit testing
                 match state_guard.active_tab {
                     TAB_STATUS => {
+                        // Art style toggle pills at y: 16..46
+                        if pt_y >= 16 && pt_y <= 46 {
+                            if pt_x >= 655 && pt_x <= 780 {
+                                info!("GUI Action: Switch to Pixel Art style");
+                                state_guard.settings.art_style = CompanionArtStyle::PixelArt;
+                                send_ipc_async(
+                                    &state_guard,
+                                    IpcRequest::UpdateSettings(state_guard.settings.clone()),
+                                );
+                                state_guard.status_feedback = if state_guard.locale
+                                    == SupportedLocale::TrTr
+                                {
+                                    "Görsel stil Piksel Sanatı (Mimi) olarak ayarlandı! 🎨".into()
+                                } else {
+                                    "Art style switched to Pixel Art (Mimi)! 🎨".into()
+                                };
+                                InvalidateRect(hwnd, std::ptr::null(), 0);
+                            } else if pt_x >= 790 && pt_x <= 915 {
+                                info!("GUI Action: Switch to Realistic (Oreo) style");
+                                state_guard.settings.art_style = CompanionArtStyle::Realistic;
+                                send_ipc_async(
+                                    &state_guard,
+                                    IpcRequest::UpdateSettings(state_guard.settings.clone()),
+                                );
+                                state_guard.status_feedback =
+                                    if state_guard.locale == SupportedLocale::TrTr {
+                                        "Görsel stil Gerçek Kedi (Oreo) olarak ayarlandı! 📸".into()
+                                    } else {
+                                        "Art style switched to Real Cat (Oreo)! 📸".into()
+                                    };
+                                InvalidateRect(hwnd, std::ptr::null(), 0);
+                            }
+                        }
+
                         // Quick Care Buttons at y = 250..290:
                         // 1. Feed: 248..373
                         if pt_y >= 250 && pt_y <= 290 && pt_x >= 248 && pt_x <= 373 {
@@ -794,9 +829,9 @@ unsafe extern "system" fn control_center_wndproc(
                         }
                     }
                     TAB_SETTINGS => {
-                        // Interface Language Buttons:
-                        // Türkçe at (248..410, 105..150)
-                        if pt_x >= 248 && pt_x <= 410 && pt_y >= 105 && pt_y <= 150 {
+                        // Interface Language Buttons (y: 92..132)
+                        // Türkçe at (248..410)
+                        if pt_x >= 248 && pt_x <= 410 && pt_y >= 92 && pt_y <= 132 {
                             state_guard.locale = SupportedLocale::TrTr;
                             state_guard.i18n.set_locale(SupportedLocale::TrTr);
                             state_guard.settings.locale = SupportedLocale::TrTr;
@@ -806,8 +841,8 @@ unsafe extern "system" fn control_center_wndproc(
                             );
                             InvalidateRect(hwnd, std::ptr::null(), 0);
                         }
-                        // English at (425..585, 105..150)
-                        if pt_x >= 425 && pt_x <= 585 && pt_y >= 105 && pt_y <= 150 {
+                        // English at (425..585)
+                        if pt_x >= 425 && pt_x <= 585 && pt_y >= 92 && pt_y <= 132 {
                             state_guard.locale = SupportedLocale::EnUs;
                             state_guard.i18n.set_locale(SupportedLocale::EnUs);
                             state_guard.settings.locale = SupportedLocale::EnUs;
@@ -818,8 +853,28 @@ unsafe extern "system" fn control_center_wndproc(
                             InvalidateRect(hwnd, std::ptr::null(), 0);
                         }
 
-                        // Cat Breed Buttons at y = 205..245:
-                        if pt_y >= 205 && pt_y <= 245 {
+                        // Art Style Buttons at y: 170..210:
+                        // Pixel Art (248..470)
+                        if pt_x >= 248 && pt_x <= 470 && pt_y >= 170 && pt_y <= 210 {
+                            state_guard.settings.art_style = CompanionArtStyle::PixelArt;
+                            send_ipc_async(
+                                &state_guard,
+                                IpcRequest::UpdateSettings(state_guard.settings.clone()),
+                            );
+                            InvalidateRect(hwnd, std::ptr::null(), 0);
+                        }
+                        // Realistic Oreo (485..710)
+                        if pt_x >= 485 && pt_x <= 710 && pt_y >= 170 && pt_y <= 210 {
+                            state_guard.settings.art_style = CompanionArtStyle::Realistic;
+                            send_ipc_async(
+                                &state_guard,
+                                IpcRequest::UpdateSettings(state_guard.settings.clone()),
+                            );
+                            InvalidateRect(hwnd, std::ptr::null(), 0);
+                        }
+
+                        // Cat Breed Buttons at y: 248..285:
+                        if pt_y >= 248 && pt_y <= 285 {
                             let breeds = [
                                 (248, 328, CatBreed::Tabby),
                                 (336, 421, CatBreed::Tuxedo),
@@ -844,8 +899,8 @@ unsafe extern "system" fn control_center_wndproc(
                             }
                         }
 
-                        // Always On Top button (730..895, 312..348)
-                        if pt_x >= 730 && pt_x <= 895 && pt_y >= 312 && pt_y <= 348 {
+                        // Always On Top button (730..895, 342..378)
+                        if pt_x >= 730 && pt_x <= 895 && pt_y >= 342 && pt_y <= 378 {
                             let next = !state_guard.settings.always_on_top;
                             state_guard.settings.always_on_top = next;
                             send_ipc_async(
@@ -855,8 +910,8 @@ unsafe extern "system" fn control_center_wndproc(
                             InvalidateRect(hwnd, std::ptr::null(), 0);
                         }
 
-                        // Privacy Mode button (730..895, 362..398)
-                        if pt_x >= 730 && pt_x <= 895 && pt_y >= 362 && pt_y <= 398 {
+                        // Privacy Mode button (730..895, 392..428)
+                        if pt_x >= 730 && pt_x <= 895 && pt_y >= 392 && pt_y <= 428 {
                             let next = !state_guard.privacy_mode;
                             state_guard.privacy_mode = next;
                             state_guard.settings.privacy_mode = next;
@@ -921,6 +976,53 @@ unsafe fn render_tab_status(
     };
     draw_str(hdc, 248, 20, title_text);
 
+    // Art Style Switcher Pills at Top Right (x: 655..780, 790..915, y: 16..46)
+    let is_pixel = state.settings.art_style == CompanionArtStyle::PixelArt;
+    let (bg_pixel, bdr_pixel) = if is_pixel {
+        (COLOR_PEACH_LIGHT, COLOR_PEACH_ACCENT)
+    } else {
+        (COLOR_CARD_BG, COLOR_CARD_BORDER)
+    };
+    let (bg_real, bdr_real) = if !is_pixel {
+        (COLOR_PEACH_LIGHT, COLOR_PEACH_ACCENT)
+    } else {
+        (COLOR_CARD_BG, COLOR_CARD_BORDER)
+    };
+    let lbl_pixel = if state.locale == SupportedLocale::TrTr {
+        "🎨  Piksel"
+    } else {
+        "🎨  Pixel Art"
+    };
+    let lbl_real = if state.locale == SupportedLocale::TrTr {
+        "📸  Gerçek (Oreo)"
+    } else {
+        "📸  Real Cat"
+    };
+    draw_button(
+        hdc,
+        655,
+        16,
+        780,
+        46,
+        lbl_pixel,
+        bg_pixel,
+        bdr_pixel,
+        COLOR_TEXT_COCOA,
+        hfont_bold,
+    );
+    draw_button(
+        hdc,
+        790,
+        16,
+        915,
+        46,
+        lbl_real,
+        bg_real,
+        bdr_real,
+        COLOR_TEXT_COCOA,
+        hfont_bold,
+    );
+
     // Main Companion Card (x: 248..915, y: 55..235)
     draw_card(hdc, 248, 55, 915, 235, COLOR_CARD_BG, COLOR_CARD_BORDER);
 
@@ -931,17 +1033,29 @@ unsafe fn render_tab_status(
     SelectObject(hdc, hfont_bold);
     SetTextColor(hdc, COLOR_TEXT_MUTED);
     let is_tr = state.locale == SupportedLocale::TrTr;
-    let breed_name = state.settings.cat_breed.display_name(is_tr);
-    draw_str(hdc, 280, 200, &format!("🐱 {}", breed_name));
+    let breed_name = if state.settings.art_style == CompanionArtStyle::Realistic {
+        if is_tr {
+            "Bıyıklı Smokin (Oreo)".to_string()
+        } else {
+            "Mustache Tuxedo (Oreo)".to_string()
+        }
+    } else {
+        format!("🐱 {}", state.settings.cat_breed.display_name(is_tr))
+    };
+    draw_str(hdc, 266, 200, &breed_name);
 
     // Pet Info on Right Side of Card
     SelectObject(hdc, hfont_subtitle);
     SetTextColor(hdc, COLOR_TEXT_COCOA);
-    let pet_name = state
-        .active_pet
-        .as_ref()
-        .map(|p| p.name.as_str())
-        .unwrap_or("Mimi");
+    let pet_name = if state.settings.art_style == CompanionArtStyle::Realistic {
+        "Oreo"
+    } else {
+        state
+            .active_pet
+            .as_ref()
+            .map(|p| p.name.as_str())
+            .unwrap_or("Mimi")
+    };
     draw_str(hdc, 410, 68, pet_name);
 
     // Current Behavior Badge
@@ -1987,9 +2101,9 @@ unsafe fn render_tab_settings(
     } else {
         "Interface Language:"
     };
-    draw_str(hdc, 248, 75, lang_header);
+    draw_str(hdc, 248, 70, lang_header);
 
-    // Language Buttons
+    // Language Buttons (y: 92..132)
     let tr_active = state.locale == SupportedLocale::TrTr;
     let bg_tr = if tr_active {
         COLOR_PEACH_ACCENT
@@ -2004,9 +2118,9 @@ unsafe fn render_tab_settings(
     draw_button(
         hdc,
         248,
-        105,
+        92,
         410,
-        150,
+        132,
         "🇹🇷  Türkçe",
         bg_tr,
         border_tr,
@@ -2028,9 +2142,9 @@ unsafe fn render_tab_settings(
     draw_button(
         hdc,
         425,
-        105,
+        92,
         585,
-        150,
+        132,
         "🇬🇧  English",
         bg_en,
         border_en,
@@ -2038,15 +2152,80 @@ unsafe fn render_tab_settings(
         hfont_bold,
     );
 
-    // Section 2: Kedi Cinsi / Companion Breed
+    // Section 2: Görsel Sanat Stili / Companion Art Style
+    SelectObject(hdc, hfont_bold);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
+    let style_header = if state.locale == SupportedLocale::TrTr {
+        "Görsel Sanat Stili / Art Style:"
+    } else {
+        "Companion Art Style:"
+    };
+    draw_str(hdc, 248, 147, style_header);
+
+    let is_pixel = state.settings.art_style == CompanionArtStyle::PixelArt;
+    let bg_pixel = if is_pixel {
+        COLOR_PEACH_ACCENT
+    } else {
+        COLOR_CARD_BG
+    };
+    let border_pixel = if is_pixel {
+        COLOR_TEXT_COCOA
+    } else {
+        COLOR_CARD_BORDER
+    };
+    draw_button(
+        hdc,
+        248,
+        170,
+        470,
+        210,
+        if state.locale == SupportedLocale::TrTr {
+            "🎨  Piksel Sanatı (Mimi)"
+        } else {
+            "🎨  Pixel Art (Mimi)"
+        },
+        bg_pixel,
+        border_pixel,
+        COLOR_TEXT_COCOA,
+        hfont_bold,
+    );
+
+    let bg_real = if !is_pixel {
+        COLOR_PEACH_ACCENT
+    } else {
+        COLOR_CARD_BG
+    };
+    let border_real = if !is_pixel {
+        COLOR_TEXT_COCOA
+    } else {
+        COLOR_CARD_BORDER
+    };
+    draw_button(
+        hdc,
+        485,
+        170,
+        710,
+        210,
+        if state.locale == SupportedLocale::TrTr {
+            "📸  Gerçek Kedi (Oreo Smokin)"
+        } else {
+            "📸  Real Cat (Oreo Tuxedo)"
+        },
+        bg_real,
+        border_real,
+        COLOR_TEXT_COCOA,
+        hfont_bold,
+    );
+
+    // Section 3: Piksel Kedi Cinsi / Companion Breed
     SelectObject(hdc, hfont_bold);
     SetTextColor(hdc, COLOR_TEXT_COCOA);
     let breed_header = if state.locale == SupportedLocale::TrTr {
-        "Aktif Kedi Cinsi / Companion Breed:"
+        "Piksel Kedi Deseni / Coat Pattern (Mimi):"
     } else {
-        "Active Companion Breed:"
+        "Pixel Coat Pattern (Mimi):"
     };
-    draw_str(hdc, 248, 175, breed_header);
+    draw_str(hdc, 248, 225, breed_header);
 
     let breeds = [
         (248, 328, CatBreed::Tabby, "Tekir"),
@@ -2073,9 +2252,9 @@ unsafe fn render_tab_settings(
         draw_button(
             hdc,
             x0,
-            205,
+            248,
             x1,
-            245,
+            285,
             name,
             bg,
             border,
@@ -2084,8 +2263,8 @@ unsafe fn render_tab_settings(
         );
     }
 
-    // Section 3: Masaüstü & Performans Tercihleri
-    draw_card(hdc, 248, 270, 915, 480, COLOR_CARD_BG, COLOR_CARD_BORDER);
+    // Section 4: Masaüstü & Performans Tercihleri
+    draw_card(hdc, 248, 305, 915, 510, COLOR_CARD_BG, COLOR_CARD_BORDER);
 
     SelectObject(hdc, hfont_bold);
     SetTextColor(hdc, COLOR_TEXT_COCOA);
@@ -2094,7 +2273,7 @@ unsafe fn render_tab_settings(
     } else {
         "🖥️  Desktop Preferences & Security"
     };
-    draw_str(hdc, 265, 285, title_pref);
+    draw_str(hdc, 265, 318, title_pref);
 
     // 1. Always On Top
     SelectObject(hdc, hfont_bold);
@@ -2104,7 +2283,7 @@ unsafe fn render_tab_settings(
     } else {
         "Always On Top:"
     };
-    draw_str(hdc, 265, 315, aot_label);
+    draw_str(hdc, 265, 345, aot_label);
 
     SelectObject(hdc, hfont_regular);
     SetTextColor(hdc, COLOR_TEXT_MUTED);
@@ -2113,7 +2292,7 @@ unsafe fn render_tab_settings(
     } else {
         "Pet floats above active desktop windows"
     };
-    draw_str(hdc, 265, 335, aot_sub);
+    draw_str(hdc, 265, 365, aot_sub);
 
     let (aot_btn_text, aot_bg, aot_border, aot_fg) = if state.settings.always_on_top {
         (
@@ -2141,9 +2320,9 @@ unsafe fn render_tab_settings(
     draw_button(
         hdc,
         730,
-        312,
+        342,
         895,
-        348,
+        378,
         aot_btn_text,
         aot_bg,
         aot_border,
@@ -2159,7 +2338,7 @@ unsafe fn render_tab_settings(
     } else {
         "Privacy Mode:"
     };
-    draw_str(hdc, 265, 365, priv_label);
+    draw_str(hdc, 265, 395, priv_label);
 
     SelectObject(hdc, hfont_regular);
     SetTextColor(hdc, COLOR_TEXT_MUTED);
@@ -2168,7 +2347,7 @@ unsafe fn render_tab_settings(
     } else {
         "Halts screen capture and inspection hooks"
     };
-    draw_str(hdc, 265, 385, priv_sub);
+    draw_str(hdc, 265, 415, priv_sub);
 
     let (priv_btn_text, priv_bg, priv_border, priv_fg) = if state.privacy_mode {
         (
@@ -2196,9 +2375,9 @@ unsafe fn render_tab_settings(
     draw_button(
         hdc,
         730,
-        362,
+        392,
         895,
-        398,
+        428,
         priv_btn_text,
         priv_bg,
         priv_border,
@@ -2210,17 +2389,17 @@ unsafe fn render_tab_settings(
     SelectObject(hdc, hfont_regular);
     SetTextColor(hdc, COLOR_TEXT_MUTED);
     let anim_info = if state.locale == SupportedLocale::TrTr {
-        "• Animasyon Kalitesi: 60 FPS Dinamik Hızlanma, Hafif ve Akıcı GDI İşleme."
+        "• Görsel Motoru: Fotogerçekçi Katmanlı & Piksel Sanatı, 60 FPS Dinamik Render."
     } else {
-        "• Animation Engine: 60 FPS dynamic frame scheduling, lightweight GDI."
+        "• Visual Engine: Photorealistic Layered & Pixel Art, 60 FPS Dynamic Rendering."
     };
     let author_info = if state.locale == SupportedLocale::TrTr {
         "• Lisans ve Geliştirici: Tiyatrotist • AGPL-3.0 Açık Kaynak."
     } else {
         "• Author & License: Tiyatrotist • AGPL-3.0 Open-Source."
     };
-    draw_str(hdc, 265, 418, anim_info);
-    draw_str(hdc, 265, 442, author_info);
+    draw_str(hdc, 265, 448, anim_info);
+    draw_str(hdc, 265, 472, author_info);
 
     // Save Feedback Text
     SelectObject(hdc, hfont_regular);
@@ -2230,7 +2409,7 @@ unsafe fn render_tab_settings(
     } else {
         "✓ Settings are automatically persisted to local SQLite storage."
     };
-    draw_str(hdc, 248, 500, save_note);
+    draw_str(hdc, 248, 525, save_note);
 }
 
 // ---------------------------------------------------------------------------
@@ -2471,11 +2650,16 @@ unsafe fn draw_cat_sprite(
 
     let (_, frame_name) = get_pet_mood_and_frame(state);
 
-    // Render 128x128 sprite (2x scale) with cream background #FFF8F0 (BGR 0x00F0F8FF -> RGB 0x00FFF8F0)
-    let (pixels, out_w, out_h) =
+    // Render 128x128 sprite with cream background #FFF8F0 (BGR 0x00F0F8FF -> RGB 0x00FFF8F0)
+    let (pixels, out_w, out_h) = if state.settings.art_style == CompanionArtStyle::Realistic {
+        state
+            .realistic_sheet
+            .render_frame_bgra(frame_name, 128, 128, Some(0x00FFF8F0))
+    } else {
         state
             .sprite_sheet
-            .render_frame_bgra_scaled(frame_name, 2, Some(0x00FFF8F0));
+            .render_frame_bgra_scaled(frame_name, 2, Some(0x00FFF8F0))
+    };
 
     let bmi = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
@@ -2992,6 +3176,7 @@ fn run_windows_gui_loop(initial_locale: SupportedLocale, initial_tab: usize) {
         let i18n = I18nManager::new(initial_locale);
         let default_breed = CatBreed::Tabby;
         let sprite_sheet = MimiSpriteSheet::generate_for_breed(default_breed);
+        let realistic_sheet = RealisticCompanionSheet::new();
 
         let state = Box::new(Mutex::new(ControlCenterState {
             active_tab: cur_tab,
@@ -3009,6 +3194,7 @@ fn run_windows_gui_loop(initial_locale: SupportedLocale, initial_tab: usize) {
             runtime_handle: handle,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             sprite_sheet,
+            realistic_sheet,
             frame_counter: 0,
             hwnd_main: hwnd,
             hwnd_chat_input,

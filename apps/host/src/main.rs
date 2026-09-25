@@ -17,7 +17,7 @@ use openpet_reminders::ReminderService;
 use openpet_render::FrameScheduler;
 use openpet_screen::ScreenPrivacyManager;
 use openpet_storage::Database;
-use openpet_types::{AppSettings, PetId, PetMetadata};
+use openpet_types::{AppSettings, CompanionArtStyle, PetId, PetMetadata};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -160,6 +160,7 @@ async fn main() -> Result<()> {
         settings.locale,
         settings.privacy_mode,
         settings.cat_breed,
+        settings.art_style,
         settings.always_on_top,
         interaction_tx,
         tray_action_tx,
@@ -259,6 +260,21 @@ async fn main() -> Result<()> {
                     }
                     TrayAction::TogglePetVisibility => {
                         info!("System Tray: Toggle pet visibility");
+                    }
+                    TrayAction::ToggleArtStyle => {
+                        let mut settings = state_tray.settings.lock().await;
+                        settings.art_style = match settings.art_style {
+                            CompanionArtStyle::PixelArt => CompanionArtStyle::Realistic,
+                            CompanionArtStyle::Realistic => CompanionArtStyle::PixelArt,
+                        };
+                        let style = settings.art_style;
+                        let _ = state_tray.db.save_settings(&settings);
+                        info!("System Tray: Companion art style toggled to: {:?}", style);
+                        if let Ok(guard) = state_tray.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                let _ = tx.send(PetWindowCommand::SetArtStyle(style));
+                            }
+                        }
                     }
                     TrayAction::ExitApplication => {
                         info!("System Tray: Exit application requested. Initiating graceful shutdown.");
@@ -757,6 +773,7 @@ impl openpet_ipc::IpcRequestHandler for HostState {
                             tx.send(PetWindowCommand::SetPrivacyMode(new_settings.privacy_mode));
                         let _ = tx.send(PetWindowCommand::SetLocale(new_settings.locale));
                         let _ = tx.send(PetWindowCommand::SetBreed(new_settings.cat_breed));
+                        let _ = tx.send(PetWindowCommand::SetArtStyle(new_settings.art_style));
                         let _ =
                             tx.send(PetWindowCommand::SetAlwaysOnTop(new_settings.always_on_top));
                     }

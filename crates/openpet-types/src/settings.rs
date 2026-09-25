@@ -54,6 +54,35 @@ pub enum UpdateChannel {
     Beta,
 }
 
+/// Supported companion visual rendering art styles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum CompanionArtStyle {
+    #[default]
+    PixelArt, // Klasik prosedürel piksel sanatı Mimi
+    Realistic, // Gerçekçi fotoğrafik kedi (Oreo - Bıyıklı Smokin)
+}
+
+impl CompanionArtStyle {
+    pub fn display_name(&self, is_tr: bool) -> &'static str {
+        match self {
+            Self::PixelArt => {
+                if is_tr {
+                    "Piksel Sanatı (Mimi)"
+                } else {
+                    "Pixel Art (Mimi)"
+                }
+            }
+            Self::Realistic => {
+                if is_tr {
+                    "Gerçek Kedi (Oreo - Bıyıklı Smokin)"
+                } else {
+                    "Realistic Cat (Oreo - Tuxedo)"
+                }
+            }
+        }
+    }
+}
+
 /// Comprehensive, strongly-typed user preferences and system settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -78,6 +107,9 @@ pub struct AppSettings {
     /// Active real cat breed appearance
     #[serde(default)]
     pub cat_breed: crate::pet::CatBreed,
+    /// Active companion art style (procedural pixel art or realistic photography)
+    #[serde(default)]
+    pub art_style: CompanionArtStyle,
     /// Update release train
     pub update_channel: UpdateChannel,
 }
@@ -96,6 +128,7 @@ impl Default for AppSettings {
             animation_quality: AnimationQuality::High,
             reduced_motion: false,
             cat_breed: crate::pet::CatBreed::Tabby,
+            art_style: CompanionArtStyle::PixelArt,
             update_channel: UpdateChannel::Stable,
         }
     }
@@ -111,5 +144,15 @@ mod tests {
         // Zero capture privacy guarantee verification:
         assert!(!settings.screen_analysis_enabled);
         assert!(!settings.privacy_mode);
+        assert_eq!(settings.art_style, CompanionArtStyle::PixelArt);
+    }
+
+    #[test]
+    fn test_art_style_serialization() {
+        let style = CompanionArtStyle::Realistic;
+        let json = serde_json::to_string(&style).expect("serialize style");
+        let deserialized: CompanionArtStyle =
+            serde_json::from_str(&json).expect("deserialize style");
+        assert_eq!(deserialized, CompanionArtStyle::Realistic);
     }
 }

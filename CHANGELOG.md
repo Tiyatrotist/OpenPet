@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Dual Art-Style Companion Engine**:
+  - **Photorealistic Companion (Gerçek Kedi)**: Added Oreo the Tuxedo Cat (`oreo-tuxedo-cat`), featuring high-resolution photographic cutout frames (`sit`, `idle`, `high_five`, `sleep`, `stretch`, `curious`, `ask`) derived from real companion photos with flood-fill background removal and smooth alpha scaling.
+  - **Procedural Pixel Art Companion**: Enriched Mimi with 7 customizable breeds and coat patterns (Tabby, Tuxedo, Calico, Ginger, Siamese, Black, White).
+  - **Art Style Switcher**: Instant switching between Pixel Art and Realistic styles directly from the Control Center status card, application settings, desktop pet right-click context menu, and system tray.
+  - **Official Package**: Added `packs/official/realistic-cat` with official V1 schema manifest and localization.
+
 ## [0.1.0-alpha.1] - 2026-09-23
 
 ### Highlights

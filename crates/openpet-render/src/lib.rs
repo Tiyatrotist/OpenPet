@@ -5,9 +5,11 @@
 pub mod atlas;
 pub mod hitmask;
 pub mod mimi;
+pub mod realistic;
 pub mod scheduler;
 
 pub use atlas::*;
 pub use hitmask::*;
 pub use mimi::*;
+pub use realistic::*;
 pub use scheduler::*;

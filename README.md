@@ -28,6 +28,10 @@ OpenPet is an open-source, local-first desktop pet and companion platform for Wi
 ---
 
 ## Core Capabilities
+- **Dual Art-Style Companion Engine**:
+  - **Pixel Art**: Procedural companion Mimi with 7 customizable breeds and fur patterns (Tabby/Tekir, Tuxedo/Smokin, Calico, Ginger/Sarıman, Siamese/Siyam, Black/Siyah, White/Beyaz).
+  - **Photorealistic (Gerçek Kedi)**: High-resolution photographic cutout companion Oreo (Bıyıklı Smokin / Tuxedo with mustache marking) with alpha-channel edge processing and transparent desktop integration.
+  - Seamless switching anytime via Control Center header, Settings tab, desktop pet right-click menu, or system tray.
 - **Deterministic Utility AI Engine**: 16+ semantic states (`idle`, `walk`, `run`, `sit`, `sleep`, `wake`, `play`, `pet`, `high_five`, etc.) evaluated at 10–20 Hz with natural circadian rhythm transitions.
 - **Direct Desktop Interactions**: Drag-and-drop with position tracking, petting, high fives, and single/double-click reactions.
 - **Dynamic Frame Scheduler**: Adapts frame rendering between 5 FPS (deep sleep), 24 FPS (idle), and 60 FPS (active locomotion).
@@ -103,9 +107,9 @@ Or with PowerShell:
 .\Run-OpenPet.ps1
 ```
 This automatically starts:
-1. **Interactive Desktop Pet**: Mimi the Cat floats seamlessly on your desktop. Click to pet her, drag her around, or right-click to open actions!
-2. **System Tray Icon**: Lives in your Windows taskbar with a full context menu (Open Control Center, Show/Hide Pet, Privacy Mode, Pause, Settings, Exit).
-3. **Graphical Control Center**: Full Win32 GUI window to check status, chat with Mimi, create desktop reminders, and switch between English and Türkçe!
+1. **Interactive Desktop Pet**: Floats seamlessly on your desktop (choose between procedural Pixel Art Mimi or Realistic Oreo the Tuxedo Cat). Click to pet, drag around, or right-click to open actions!
+2. **System Tray Icon**: Lives in your Windows taskbar with a full context menu (Open Control Center, Toggle Art Style, Show/Hide Pet, Privacy Mode, Pause, Settings, Exit).
+3. **Graphical Control Center**: Full Win32 GUI window to check companion needs, chat, manage reminders, switch art styles, and toggle English / Türkçe!
 
 You can also launch individual components manually:
 ```powershell

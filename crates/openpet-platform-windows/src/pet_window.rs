@@ -7,7 +7,8 @@
 use crate::chat_window::FloatingChatWindow;
 use crate::tray::{SystemTray, TrayAction, TrayState, WM_TRAY_CALLBACK};
 use openpet_render::mimi::MimiSpriteSheet;
-use openpet_types::{BehaviorType, InteractionType, SupportedLocale};
+use openpet_render::realistic::RealisticCompanionSheet;
+use openpet_types::{BehaviorType, CompanionArtStyle, InteractionType, SupportedLocale};
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -31,6 +32,7 @@ pub const CMD_PET_SLEEP: usize = 3007;
 pub const CMD_PET_HIDE: usize = 3008;
 pub const CMD_PET_SETTINGS: usize = 3009;
 pub const CMD_PET_EXIT: usize = 3010;
+pub const CMD_PET_TOGGLE_STYLE: usize = 3011;
 
 /// Commands that can be dispatched to the active pet window from host threads.
 #[derive(Debug)]
@@ -46,13 +48,52 @@ pub enum PetWindowCommand {
     TriggerAction(InteractionType),
     PlayAnimation { name: String, duration_ticks: u32 },
     SetBreed(openpet_types::CatBreed),
+    SetArtStyle(CompanionArtStyle),
     SetAlwaysOnTop(bool),
     Close,
+}
+
+/// Resolves which realistic companion frame to render based on pet behavior, current animation, and chat state.
+pub fn resolve_realistic_frame(
+    behavior: BehaviorType,
+    current_frame_name: &str,
+    chat_open: bool,
+) -> &'static str {
+    if chat_open {
+        return "ask_0";
+    }
+
+    if current_frame_name.starts_with("sleep") || current_frame_name.contains("loaf") {
+        return "sleep_0";
+    }
+    if current_frame_name.starts_with("stretch") {
+        return "stretch_0";
+    }
+    if current_frame_name.starts_with("curious") {
+        return "curious_0";
+    }
+    if current_frame_name.starts_with("ask") || current_frame_name.starts_with("chat") {
+        return "ask_0";
+    }
+    if current_frame_name.starts_with("high_five") {
+        return "high_five_0";
+    }
+
+    match behavior {
+        BehaviorType::Sleep | BehaviorType::Loaf => "sleep_0",
+        BehaviorType::Stretch => "stretch_0",
+        BehaviorType::Curious => "curious_0",
+        BehaviorType::HighFive => "high_five_0",
+        BehaviorType::Sit | BehaviorType::Happy | BehaviorType::Idle => "sit_0",
+        _ => "sit_0",
+    }
 }
 
 /// Internal state owned by the pet window Win32 message procedure.
 pub struct PetWindowState {
     pub sprite_sheet: MimiSpriteSheet,
+    pub realistic_sheet: RealisticCompanionSheet,
+    pub art_style: CompanionArtStyle,
     pub current_frame_name: String,
     pub current_behavior: BehaviorType,
     pub frame_counter: u32,
@@ -124,11 +165,31 @@ unsafe extern "system" fn pet_window_wndproc(
 
                 // Only render sprite frame when pet is visible
                 if state.pet_visible {
-                    let (bgra, w, h) = state.sprite_sheet.render_frame_bgra_scaled(
-                        &state.current_frame_name,
-                        2,
-                        Some(PET_CHROMA_KEY),
-                    );
+                    let (bgra, w, h) = match state.art_style {
+                        CompanionArtStyle::PixelArt => state.sprite_sheet.render_frame_bgra_scaled(
+                            &state.current_frame_name,
+                            2,
+                            Some(PET_CHROMA_KEY),
+                        ),
+                        CompanionArtStyle::Realistic => {
+                            let is_chat_open = state
+                                .chat_window
+                                .as_ref()
+                                .map(|c| c.is_visible())
+                                .unwrap_or(false);
+                            let frame = resolve_realistic_frame(
+                                state.current_behavior,
+                                &state.current_frame_name,
+                                is_chat_open,
+                            );
+                            state.realistic_sheet.render_frame_bgra(
+                                frame,
+                                128,
+                                128,
+                                Some(PET_CHROMA_KEY),
+                            )
+                        }
+                    };
 
                     let mut bmi: BITMAPINFO = std::mem::zeroed();
                     bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
@@ -633,11 +694,35 @@ unsafe extern "system" fn pet_window_wndproc(
                 let sprite_rel_x = rel_x - 16;
                 let sprite_rel_y = rel_y - 42;
                 if (0..128).contains(&sprite_rel_x) && (0..128).contains(&sprite_rel_y) {
-                    let sprite_x = (sprite_rel_x / 2).clamp(0, 63) as usize;
-                    let sprite_y = (sprite_rel_y / 2).clamp(0, 63) as usize;
-                    let frame = state.sprite_sheet.get_frame(&state.current_frame_name);
-                    let px = frame.get_pixel(sprite_x, sprite_y);
-                    if px[3] > 0 {
+                    let is_opaque = match state.art_style {
+                        CompanionArtStyle::PixelArt => {
+                            let sprite_x = (sprite_rel_x / 2).clamp(0, 63) as usize;
+                            let sprite_y = (sprite_rel_y / 2).clamp(0, 63) as usize;
+                            let frame = state.sprite_sheet.get_frame(&state.current_frame_name);
+                            let px = frame.get_pixel(sprite_x, sprite_y);
+                            px[3] > 0
+                        }
+                        CompanionArtStyle::Realistic => {
+                            let is_chat_open = state
+                                .chat_window
+                                .as_ref()
+                                .map(|c| c.is_visible())
+                                .unwrap_or(false);
+                            let frame = resolve_realistic_frame(
+                                state.current_behavior,
+                                &state.current_frame_name,
+                                is_chat_open,
+                            );
+                            state.realistic_sheet.is_pixel_opaque(
+                                frame,
+                                128,
+                                128,
+                                sprite_rel_x as usize,
+                                sprite_rel_y as usize,
+                            )
+                        }
+                    };
+                    if is_opaque {
                         return windows_sys::Win32::UI::WindowsAndMessaging::HTCLIENT as isize;
                     }
                 }
@@ -793,7 +878,18 @@ unsafe fn show_pet_context_menu(
         },
     );
 
-    // 10. ⚙️ Ayarlar (Settings)
+    // 10. 🎨 Görünüm: Piksel / Gerçekçi
+    append_item(
+        hmenu,
+        CMD_PET_TOGGLE_STYLE,
+        if is_tr {
+            "🎨 Görünüm: Piksel / Gerçekçi"
+        } else {
+            "🎨 Appearance: Pixel / Realistic"
+        },
+    );
+
+    // 11. ⚙️ Ayarlar (Settings)
     append_item(
         hmenu,
         CMD_PET_SETTINGS,
@@ -806,7 +902,7 @@ unsafe fn show_pet_context_menu(
 
     AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
 
-    // 11. ❌ Çıkış (Exit)
+    // 12. ❌ Çıkış (Exit)
     append_item(
         hmenu,
         CMD_PET_EXIT,
@@ -953,9 +1049,33 @@ unsafe fn show_pet_context_menu(
                     privacy_mode: state.privacy_mode,
                     pet_paused: state.pet_paused,
                     pet_visible: false,
+                    art_style: state.art_style,
                     locale: state.locale,
                 });
             }
+        }
+        CMD_PET_TOGGLE_STYLE => {
+            state.art_style = match state.art_style {
+                CompanionArtStyle::PixelArt => CompanionArtStyle::Realistic,
+                CompanionArtStyle::Realistic => CompanionArtStyle::PixelArt,
+            };
+            info!(
+                "Pet context menu: Toggled art style to {:?}",
+                state.art_style
+            );
+            if let Some(ref mut tray) = state.tray {
+                tray.update_state(TrayState {
+                    privacy_mode: state.privacy_mode,
+                    pet_paused: state.pet_paused,
+                    pet_visible: state.pet_visible,
+                    art_style: state.art_style,
+                    locale: state.locale,
+                });
+            }
+            if let Some(ref tx) = state.tray_action_tx {
+                let _ = tx.send(TrayAction::ToggleArtStyle);
+            }
+            InvalidateRect(hwnd, std::ptr::null(), 0);
         }
         CMD_PET_SETTINGS => {
             info!("Pet context menu: Opening settings");
@@ -1006,6 +1126,7 @@ fn handle_tray_action(
                     privacy_mode: state.privacy_mode,
                     pet_paused: state.pet_paused,
                     pet_visible: state.pet_visible,
+                    art_style: state.art_style,
                     locale: state.locale,
                 });
             }
@@ -1018,6 +1139,7 @@ fn handle_tray_action(
                     privacy_mode: state.privacy_mode,
                     pet_paused: state.pet_paused,
                     pet_visible: state.pet_visible,
+                    art_style: state.art_style,
                     locale: state.locale,
                 });
             }
@@ -1030,6 +1152,26 @@ fn handle_tray_action(
                     privacy_mode: state.privacy_mode,
                     pet_paused: state.pet_paused,
                     pet_visible: state.pet_visible,
+                    art_style: state.art_style,
+                    locale: state.locale,
+                });
+            }
+        }
+        TrayAction::ToggleArtStyle => {
+            state.art_style = match state.art_style {
+                CompanionArtStyle::PixelArt => CompanionArtStyle::Realistic,
+                CompanionArtStyle::Realistic => CompanionArtStyle::PixelArt,
+            };
+            info!("Art style toggled to: {:?}", state.art_style);
+            unsafe {
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+            }
+            if let Some(ref mut tray) = state.tray {
+                tray.update_state(TrayState {
+                    privacy_mode: state.privacy_mode,
+                    pet_paused: state.pet_paused,
+                    pet_visible: state.pet_visible,
+                    art_style: state.art_style,
                     locale: state.locale,
                 });
             }
@@ -1086,6 +1228,7 @@ pub fn spawn_desktop_pet_window(
     initial_locale: SupportedLocale,
     initial_privacy: bool,
     initial_breed: openpet_types::CatBreed,
+    initial_art_style: CompanionArtStyle,
     initial_always_on_top: bool,
     interaction_tx: mpsc::Sender<InteractionType>,
     tray_action_tx: mpsc::Sender<TrayAction>,
@@ -1102,6 +1245,7 @@ pub fn spawn_desktop_pet_window(
                 initial_locale,
                 initial_privacy,
                 initial_breed,
+                initial_art_style,
                 initial_always_on_top,
                 interaction_tx,
                 tray_action_tx,
@@ -1117,6 +1261,7 @@ pub fn spawn_desktop_pet_window(
                     initial_locale,
                     initial_privacy,
                     initial_breed,
+                    initial_art_style,
                     initial_always_on_top,
                     interaction_tx,
                     tray_action_tx,
@@ -1136,6 +1281,7 @@ fn run_pet_window_loop(
     initial_locale: SupportedLocale,
     initial_privacy: bool,
     initial_breed: openpet_types::CatBreed,
+    initial_art_style: CompanionArtStyle,
     initial_always_on_top: bool,
     interaction_tx: mpsc::Sender<InteractionType>,
     tray_action_tx: mpsc::Sender<TrayAction>,
@@ -1246,15 +1392,19 @@ fn run_pet_window_loop(
                 privacy_mode: initial_privacy,
                 pet_paused: false,
                 pet_visible: true,
+                art_style: initial_art_style,
                 locale: initial_locale,
             },
         );
 
         let sprite_sheet = MimiSpriteSheet::generate_for_breed(initial_breed);
+        let realistic_sheet = RealisticCompanionSheet::new();
         let chat_window = FloatingChatWindow::new(hinstance, initial_locale, chat_tx);
 
         let mut state = Box::new(PetWindowState {
             sprite_sheet,
+            realistic_sheet,
+            art_style: initial_art_style,
             current_frame_name: "idle_0".to_string(),
             current_behavior: BehaviorType::Idle,
             frame_counter: 0,
@@ -1325,6 +1475,7 @@ fn run_pet_window_loop(
                                 privacy_mode: state.privacy_mode,
                                 pet_paused: state.pet_paused,
                                 pet_visible: state.pet_visible,
+                                art_style: state.art_style,
                                 locale: state.locale,
                             });
                         }
@@ -1337,6 +1488,7 @@ fn run_pet_window_loop(
                                 privacy_mode: state.privacy_mode,
                                 pet_paused: state.pet_paused,
                                 pet_visible: state.pet_visible,
+                                art_style: state.art_style,
                                 locale: state.locale,
                             });
                         }
@@ -1351,6 +1503,7 @@ fn run_pet_window_loop(
                                 privacy_mode: state.privacy_mode,
                                 pet_paused: state.pet_paused,
                                 pet_visible: state.pet_visible,
+                                art_style: state.art_style,
                                 locale: state.locale,
                             });
                         }
@@ -1438,6 +1591,19 @@ fn run_pet_window_loop(
                     }
                     PetWindowCommand::SetBreed(breed) => {
                         state.sprite_sheet = MimiSpriteSheet::generate_for_breed(breed);
+                        InvalidateRect(hwnd, std::ptr::null(), 0);
+                    }
+                    PetWindowCommand::SetArtStyle(style) => {
+                        state.art_style = style;
+                        if let Some(ref mut tray) = state.tray {
+                            tray.update_state(TrayState {
+                                privacy_mode: state.privacy_mode,
+                                pet_paused: state.pet_paused,
+                                pet_visible: state.pet_visible,
+                                art_style: state.art_style,
+                                locale: state.locale,
+                            });
+                        }
                         InvalidateRect(hwnd, std::ptr::null(), 0);
                     }
                     PetWindowCommand::SetAlwaysOnTop(top) => {
@@ -1564,5 +1730,58 @@ mod tests {
 
         let on_top_cmd = PetWindowCommand::SetAlwaysOnTop(true);
         assert!(matches!(on_top_cmd, PetWindowCommand::SetAlwaysOnTop(true)));
+
+        let style_cmd = PetWindowCommand::SetArtStyle(CompanionArtStyle::Realistic);
+        assert!(matches!(
+            style_cmd,
+            PetWindowCommand::SetArtStyle(CompanionArtStyle::Realistic)
+        ));
+    }
+
+    #[test]
+    fn test_resolve_realistic_frame_mapping() {
+        // Sleep state
+        assert_eq!(
+            resolve_realistic_frame(BehaviorType::Sleep, "sleep_0", false),
+            "sleep_0"
+        );
+        // Loaf maps to sleep pose
+        assert_eq!(
+            resolve_realistic_frame(BehaviorType::Loaf, "loaf_0", false),
+            "sleep_0"
+        );
+        // Stretch
+        assert_eq!(
+            resolve_realistic_frame(BehaviorType::Stretch, "stretch_0", false),
+            "stretch_0"
+        );
+        // Curious
+        assert_eq!(
+            resolve_realistic_frame(BehaviorType::Curious, "curious_0", false),
+            "curious_0"
+        );
+        // Chat open takes precedence
+        assert_eq!(
+            resolve_realistic_frame(BehaviorType::Idle, "idle_0", true),
+            "ask_0"
+        );
+        // High five
+        assert_eq!(
+            resolve_realistic_frame(BehaviorType::HighFive, "jump_0", false),
+            "high_five_0"
+        );
+        // Idle / Sit / Happy default to sit_0
+        assert_eq!(
+            resolve_realistic_frame(BehaviorType::Idle, "idle_0", false),
+            "sit_0"
+        );
+        assert_eq!(
+            resolve_realistic_frame(BehaviorType::Sit, "sit_0", false),
+            "sit_0"
+        );
+        assert_eq!(
+            resolve_realistic_frame(BehaviorType::Happy, "happy_0", false),
+            "sit_0"
+        );
     }
 }

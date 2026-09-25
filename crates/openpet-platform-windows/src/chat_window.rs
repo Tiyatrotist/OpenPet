@@ -802,6 +802,25 @@ impl FloatingChatWindow {
         }
     }
 
+    /// Returns whether the floating chat window is currently visible.
+    pub fn is_visible(&self) -> bool {
+        #[cfg(windows)]
+        unsafe {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, GWLP_USERDATA};
+            if self.hwnd.is_null() {
+                return false;
+            }
+            let state_ptr = GetWindowLongPtrW(self.hwnd, GWLP_USERDATA) as *mut FloatingChatState;
+            if !state_ptr.is_null() {
+                (*state_ptr).is_visible
+            } else {
+                false
+            }
+        }
+        #[cfg(not(windows))]
+        false
+    }
+
     /// Toggles visibility and snaps near the pet position if showing.
     pub fn toggle_near_pet(&self, pet_pos: (i32, i32)) {
         #[cfg(windows)]

@@ -15,6 +15,7 @@ pub enum TrayAction {
     TogglePetVisibility,
     TogglePrivacyMode,
     TogglePausePet,
+    ToggleArtStyle,
     OpenSettings,
     ExitApplication,
 }
@@ -26,6 +27,7 @@ pub const CMD_PRIVACY_MODE: usize = 1003;
 pub const CMD_PAUSE_PET: usize = 1004;
 pub const CMD_SETTINGS: usize = 1005;
 pub const CMD_EXIT: usize = 1006;
+pub const CMD_TOGGLE_STYLE: usize = 1007;
 
 /// Custom Windows message for tray callback events
 pub const WM_TRAY_CALLBACK: u32 = 0x8000 + 101; // WM_APP + 101
@@ -36,6 +38,7 @@ pub struct TrayState {
     pub privacy_mode: bool,
     pub pet_paused: bool,
     pub pet_visible: bool,
+    pub art_style: openpet_types::CompanionArtStyle,
     pub locale: SupportedLocale,
 }
 
@@ -45,6 +48,7 @@ impl Default for TrayState {
             privacy_mode: false,
             pet_paused: false,
             pet_visible: true,
+            art_style: openpet_types::CompanionArtStyle::PixelArt,
             locale: SupportedLocale::EnUs,
         }
     }
@@ -204,7 +208,15 @@ impl SystemTray {
 
             AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
 
-            // 5. Settings
+            // 5. Görünüm: Piksel / Gerçekçi (Art Style)
+            let style_label = if self.state.locale == SupportedLocale::TrTr {
+                "🎨 Görünüm: Piksel / Gerçekçi"
+            } else {
+                "🎨 Appearance: Pixel / Realistic"
+            };
+            append_item(hmenu, MF_STRING, CMD_TOGGLE_STYLE, style_label);
+
+            // 6. Settings
             append_item(
                 hmenu,
                 MF_STRING,
@@ -212,7 +224,7 @@ impl SystemTray {
                 i18n.translate("tray.settings"),
             );
 
-            // 6. Exit
+            // 7. Exit
             append_item(hmenu, MF_STRING, CMD_EXIT, i18n.translate("tray.exit"));
 
             SetForegroundWindow(hwnd);
@@ -243,6 +255,7 @@ impl SystemTray {
                 CMD_TOGGLE_PET => Some(TrayAction::TogglePetVisibility),
                 CMD_PRIVACY_MODE => Some(TrayAction::TogglePrivacyMode),
                 CMD_PAUSE_PET => Some(TrayAction::TogglePausePet),
+                CMD_TOGGLE_STYLE => Some(TrayAction::ToggleArtStyle),
                 CMD_SETTINGS => Some(TrayAction::OpenSettings),
                 CMD_EXIT => Some(TrayAction::ExitApplication),
                 _ => None,
@@ -294,5 +307,6 @@ mod tests {
         assert!(!state.privacy_mode);
         assert!(!state.pet_paused);
         assert!(state.pet_visible);
+        assert_eq!(state.art_style, openpet_types::CompanionArtStyle::PixelArt);
     }
 }
