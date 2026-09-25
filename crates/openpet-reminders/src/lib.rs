@@ -52,6 +52,10 @@ impl ReminderService {
         Ok(self.db.delete_reminder(id)?)
     }
 
+    pub fn toggle_reminder(&self, id: Uuid) -> Result<bool, ReminderError> {
+        Ok(self.db.toggle_reminder(id)?)
+    }
+
     /// Evaluates all active reminders, fires due notifications, and reschedules recurrences.
     pub fn evaluate_due_reminders(
         &self,
@@ -229,5 +233,33 @@ mod tests {
         // A subsequent evaluation immediately afterwards should NOT fire again!
         let second_check = service.evaluate_due_reminders(Utc::now()).unwrap();
         assert_eq!(second_check.len(), 0);
+    }
+
+    #[test]
+    fn test_reminder_toggle() {
+        let db = Arc::new(Database::open_in_memory().unwrap());
+        let service = ReminderService::new(db);
+
+        let rem = service
+            .schedule_reminder(
+                "Cat Nap",
+                "Take a rest",
+                Utc::now() + Duration::hours(1),
+                RecurrenceRule::Once,
+            )
+            .unwrap();
+        assert!(rem.enabled);
+
+        let active = service.toggle_reminder(rem.id).unwrap();
+        assert!(!active);
+
+        let list = service.list_reminders().unwrap();
+        assert!(!list[0].enabled);
+
+        let active_again = service.toggle_reminder(rem.id).unwrap();
+        assert!(active_again);
+
+        let list_again = service.list_reminders().unwrap();
+        assert!(list_again[0].enabled);
     }
 }

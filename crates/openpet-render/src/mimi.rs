@@ -252,14 +252,88 @@ impl FrameBuffer {
     }
 }
 
+/// Cat breed color palettes supporting realistic feline coats and patterns.
+#[derive(Debug, Clone, Copy)]
+pub struct CatColorPalette {
+    pub body_fur: [u8; 4],
+    pub secondary_fur: [u8; 4],
+    pub chest_fur: [u8; 4],
+    pub eye_iris: [u8; 4],
+    pub inner_ear: [u8; 4],
+    pub nose: [u8; 4],
+}
+
+impl CatColorPalette {
+    pub fn for_breed(breed: openpet_types::CatBreed) -> Self {
+        match breed {
+            openpet_types::CatBreed::Tabby => Self {
+                body_fur: [165, 150, 135, 255],   // Warm grey-brown coat
+                secondary_fur: [80, 70, 60, 255], // Dark tabby stripes
+                chest_fur: [240, 235, 225, 255],  // Cream bib
+                eye_iris: [45, 180, 110, 255],    // Greenish hazel
+                inner_ear: [255, 180, 195, 255],
+                nose: [240, 120, 140, 255],
+            },
+            openpet_types::CatBreed::Tuxedo => Self {
+                body_fur: [35, 35, 42, 255],      // Midnight black
+                secondary_fur: [22, 22, 28, 255], // Deep charcoal
+                chest_fur: [255, 255, 255, 255],  // Pure white bib
+                eye_iris: [35, 200, 120, 255],    // Emerald green
+                inner_ear: [255, 175, 190, 255],
+                nose: [255, 105, 140, 255],
+            },
+            openpet_types::CatBreed::Calico => Self {
+                body_fur: [255, 250, 245, 255],     // Cream white base
+                secondary_fur: [235, 125, 45, 255], // Ginger patches
+                chest_fur: [45, 45, 52, 255],       // Charcoal black patch
+                eye_iris: [235, 175, 45, 255],      // Golden amber
+                inner_ear: [255, 180, 190, 255],
+                nose: [255, 110, 145, 255],
+            },
+            openpet_types::CatBreed::Ginger => Self {
+                body_fur: [245, 140, 50, 255],      // Marmalade orange
+                secondary_fur: [200, 100, 30, 255], // Dark orange stripes
+                chest_fur: [255, 235, 205, 255],    // Warm cream
+                eye_iris: [220, 160, 40, 255],      // Honey amber
+                inner_ear: [255, 175, 190, 255],
+                nose: [255, 105, 140, 255],
+            },
+            openpet_types::CatBreed::Siamese => Self {
+                body_fur: [250, 240, 225, 255],   // Pale cream body
+                secondary_fur: [70, 50, 45, 255], // Dark seal points
+                chest_fur: [255, 248, 238, 255],
+                eye_iris: [45, 130, 245, 255], // Deep sapphire blue
+                inner_ear: [120, 85, 75, 255],
+                nose: [75, 55, 50, 255],
+            },
+            openpet_types::CatBreed::Black => Self {
+                body_fur: [30, 30, 35, 255], // Silky midnight black
+                secondary_fur: [20, 20, 25, 255],
+                chest_fur: [42, 42, 50, 255],
+                eye_iris: [255, 215, 0, 255], // Glowing amber gold
+                inner_ear: [70, 70, 80, 255],
+                nose: [40, 40, 45, 255],
+            },
+            openpet_types::CatBreed::White => Self {
+                body_fur: [255, 255, 255, 255], // Pure snow white
+                secondary_fur: [240, 240, 245, 255],
+                chest_fur: [255, 255, 255, 255],
+                eye_iris: [70, 175, 255, 255], // Sky blue
+                inner_ear: [255, 190, 205, 255],
+                nose: [255, 130, 160, 255],
+            },
+        }
+    }
+}
+
 /// Mimi Cat Sprite Sheet containing all animation frames.
 pub struct MimiSpriteSheet {
     pub frames: HashMap<String, FrameBuffer>,
 }
 
 impl MimiSpriteSheet {
-    /// Generates all procedural pixel-art frames for Mimi the Cat.
-    pub fn generate() -> Self {
+    /// Generates base procedural pixel-art frames for Mimi the Cat.
+    pub fn generate_base() -> Self {
         let mut frames = HashMap::new();
 
         frames.insert("idle_0".to_string(), render_mimi_idle(0));
@@ -288,7 +362,60 @@ impl MimiSpriteSheet {
         frames.insert("groom_1".to_string(), render_mimi_groom(1));
         frames.insert("surprised_0".to_string(), render_mimi_surprised());
 
+        // Real Cat behavior frames
+        frames.insert("purr_0".to_string(), render_mimi_purr(0));
+        frames.insert("purr_1".to_string(), render_mimi_purr(1));
+        frames.insert("knead_0".to_string(), render_mimi_knead(0));
+        frames.insert("knead_1".to_string(), render_mimi_knead(1));
+        frames.insert("zoomies_0".to_string(), render_mimi_zoomies(0));
+        frames.insert("zoomies_1".to_string(), render_mimi_zoomies(1));
+        frames.insert("loaf_0".to_string(), render_mimi_loaf());
+        frames.insert("drink_0".to_string(), render_mimi_drink(0));
+        frames.insert("drink_1".to_string(), render_mimi_drink(1));
+
         Self { frames }
+    }
+
+    /// Recolors all frames in place to match a specific cat breed palette.
+    #[allow(clippy::chunks_exact_to_as_chunks)]
+    pub fn recolor_for_breed(&mut self, breed: openpet_types::CatBreed) {
+        if breed == openpet_types::CatBreed::Ginger {
+            return; // Ginger is base palette
+        }
+        let pal = CatColorPalette::for_breed(breed);
+        for frame in self.frames.values_mut() {
+            for chunk in frame.pixels.chunks_exact_mut(4) {
+                if chunk[3] == 0 {
+                    continue;
+                }
+                let px = [chunk[0], chunk[1], chunk[2], chunk[3]];
+                if px == palette::ORANGE_FUR {
+                    chunk.copy_from_slice(&pal.body_fur);
+                } else if px == palette::DARK_ORANGE {
+                    chunk.copy_from_slice(&pal.secondary_fur);
+                } else if px == palette::CREAM_FUR {
+                    chunk.copy_from_slice(&pal.chest_fur);
+                } else if px == palette::EYE_GREEN {
+                    chunk.copy_from_slice(&pal.eye_iris);
+                } else if px == palette::PINK_EAR {
+                    chunk.copy_from_slice(&pal.inner_ear);
+                } else if px == palette::PINK_NOSE {
+                    chunk.copy_from_slice(&pal.nose);
+                }
+            }
+        }
+    }
+
+    /// Generates sprite sheet with colors customized for a specific cat breed.
+    pub fn generate_for_breed(breed: openpet_types::CatBreed) -> Self {
+        let mut sheet = Self::generate_base();
+        sheet.recolor_for_breed(breed);
+        sheet
+    }
+
+    /// Generates all procedural pixel-art frames for Mimi the Cat (classic Ginger / default).
+    pub fn generate() -> Self {
+        Self::generate_for_breed(openpet_types::CatBreed::Ginger)
     }
 
     /// Retrieves an animation frame by name, falling back to "idle_0".
@@ -953,6 +1080,156 @@ fn render_mimi_surprised() -> FrameBuffer {
     fb
 }
 
+fn render_mimi_purr(step: usize) -> FrameBuffer {
+    let mut fb = FrameBuffer::new();
+    let cy_head: isize = if step == 0 { 21 } else { 20 };
+    let cy_body: isize = 37;
+
+    draw_cat_tail(&mut fb, 22, 48, -1);
+    draw_cat_ears(&mut fb, cy_head);
+    draw_cat_body(&mut fb, 32, cy_body);
+    draw_cat_face(&mut fb, 32, cy_head, false, true);
+
+    // Front paws tucked comfortably
+    fb.draw_ellipse(28, 54, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+    fb.draw_ellipse(36, 54, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+
+    // Vibrating purr musical notes / heart
+    if step == 0 {
+        fb.draw_heart(48, 14, 4);
+    } else {
+        fb.draw_sparkle(48, 12);
+        fb.draw_sparkle(16, 16);
+    }
+    fb
+}
+
+fn render_mimi_knead(step: usize) -> FrameBuffer {
+    let mut fb = FrameBuffer::new();
+    let cy_head: isize = 21;
+    let cy_body: isize = 37;
+
+    draw_cat_tail(&mut fb, 22, 48, -1);
+    draw_cat_ears(&mut fb, cy_head);
+    draw_cat_body(&mut fb, 32, cy_body);
+    draw_cat_face(&mut fb, 32, cy_head, false, true);
+
+    // Alternating kneading paws
+    if step == 0 {
+        // Left paw pressing down, right paw slightly lifted
+        fb.draw_ellipse(27, 55, 5, 4, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_ellipse(37, 51, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+    } else {
+        // Right paw pressing down, left paw slightly lifted
+        fb.draw_ellipse(27, 51, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_ellipse(37, 55, 5, 4, palette::WHITE_FUR, Some(palette::OUTLINE));
+    }
+
+    fb.draw_heart(46, 16, 3);
+    fb
+}
+
+fn render_mimi_zoomies(step: usize) -> FrameBuffer {
+    let mut fb = FrameBuffer::new();
+    let cy_head: isize = 22;
+    let cy_body: isize = 34;
+
+    // Tail high in the air with frantic angle
+    for i in 0..12 {
+        let tx = (18_isize - (i as isize * 8 / 12)) as usize;
+        let ty = (32_isize - (i as isize * 14 / 12)) as usize;
+        fb.set_pixel(tx, ty, palette::ORANGE_FUR);
+        fb.set_pixel(tx + 1, ty, palette::DARK_ORANGE);
+    }
+
+    draw_cat_ears(&mut fb, cy_head);
+    // Stretched running body
+    fb.draw_ellipse(
+        32,
+        cy_body,
+        17,
+        9,
+        palette::ORANGE_FUR,
+        Some(palette::OUTLINE),
+    );
+    fb.draw_ellipse(34, cy_body + 1, 10, 5, palette::CREAM_FUR, None);
+
+    // Wide excited eyes
+    draw_cat_face(&mut fb, 36, cy_head, true, false);
+
+    // Frantic zoomies running legs
+    if step == 0 {
+        fb.draw_ellipse(18, 48, 5, 2, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_ellipse(46, 44, 5, 2, palette::WHITE_FUR, Some(palette::OUTLINE));
+    } else {
+        fb.draw_ellipse(22, 44, 5, 2, palette::WHITE_FUR, Some(palette::OUTLINE));
+        fb.draw_ellipse(42, 48, 5, 2, palette::WHITE_FUR, Some(palette::OUTLINE));
+    }
+
+    // Motion streaks
+    fb.draw_sparkle(10, 36);
+    fb.draw_sparkle(8, 44);
+    fb
+}
+
+fn render_mimi_loaf() -> FrameBuffer {
+    let mut fb = FrameBuffer::new();
+    let cy_head: isize = 22;
+    let cy_body: isize = 38;
+
+    // Loaf posture: paws and tail fully tucked into an adorable warm bread loaf
+    fb.draw_ellipse(
+        32,
+        cy_body,
+        18,
+        12,
+        palette::ORANGE_FUR,
+        Some(palette::OUTLINE),
+    );
+    // White / cream chest under chin
+    fb.draw_ellipse(32, cy_body - 4, 11, 7, palette::CREAM_FUR, None);
+    // Tail curled neatly along the side
+    for i in 0..8 {
+        fb.set_pixel(14 + i, 46, palette::DARK_ORANGE);
+        fb.set_pixel(14 + i, 47, palette::OUTLINE);
+    }
+
+    draw_cat_ears(&mut fb, cy_head);
+    draw_cat_face(&mut fb, 32, cy_head, false, true);
+
+    fb
+}
+
+fn render_mimi_drink(step: usize) -> FrameBuffer {
+    let mut fb = FrameBuffer::new();
+    let cy_head: isize = if step == 0 { 24 } else { 22 };
+    let cy_body: isize = 38;
+
+    draw_cat_tail(&mut fb, 22, 48, -1);
+    draw_cat_ears(&mut fb, cy_head);
+    draw_cat_body(&mut fb, 32, cy_body);
+    draw_cat_face(&mut fb, 32, cy_head, false, true);
+
+    // Front paws on ground next to bowl
+    fb.draw_ellipse(26, 54, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+    fb.draw_ellipse(38, 54, 4, 3, palette::WHITE_FUR, Some(palette::OUTLINE));
+
+    // Water bowl in front of paws
+    fb.draw_ellipse(32, 57, 10, 4, palette::FISH_BLUE, Some(palette::OUTLINE));
+    fb.draw_ellipse(32, 56, 8, 3, palette::FISH_LIGHT, None);
+
+    // Little pink tongue lapping water or splash
+    if step == 0 {
+        fb.set_pixel(32, 40, palette::PINK_NOSE);
+        fb.set_pixel(32, 41, palette::PINK_NOSE);
+    } else {
+        fb.set_pixel(32, 53, palette::WHITE_FUR);
+        fb.draw_sparkle(32, 52);
+    }
+
+    fb
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -985,6 +1262,16 @@ mod tests {
             "groom_0",
             "groom_1",
             "surprised_0",
+            // Real Cat behavior frames
+            "purr_0",
+            "purr_1",
+            "knead_0",
+            "knead_1",
+            "zoomies_0",
+            "zoomies_1",
+            "loaf_0",
+            "drink_0",
+            "drink_1",
         ];
 
         for frame_name in &expected_frames {
@@ -1003,6 +1290,17 @@ mod tests {
                 frame_name
             );
         }
+    }
+
+    #[test]
+    fn test_mimi_breed_recoloring() {
+        let tabby_sheet = MimiSpriteSheet::generate_for_breed(openpet_types::CatBreed::Tabby);
+        let tuxedo_sheet = MimiSpriteSheet::generate_for_breed(openpet_types::CatBreed::Tuxedo);
+        let calico_sheet = MimiSpriteSheet::generate_for_breed(openpet_types::CatBreed::Calico);
+
+        assert!(tabby_sheet.frames.contains_key("idle_0"));
+        assert!(tuxedo_sheet.frames.contains_key("purr_0"));
+        assert!(calico_sheet.frames.contains_key("loaf_0"));
     }
 
     #[test]

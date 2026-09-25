@@ -12,6 +12,7 @@ openpet-types = { workspace = true }
 openpet-ipc = { workspace = true }
 openpet-i18n = { workspace = true }
 openpet-diagnostics = { workspace = true }
+openpet-render = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }

@@ -72,6 +72,7 @@ fn main() -> Result<()> {
         match t.to_lowercase().as_str() {
             "chat" => gui::TAB_CHAT,
             "reminders" | "reminder" => gui::TAB_REMINDERS,
+            "memory" | "memories" => gui::TAB_MEMORIES,
             "privacy" => gui::TAB_PRIVACY,
             "settings" | "setting" => gui::TAB_SETTINGS,
             _ => gui::TAB_STATUS,

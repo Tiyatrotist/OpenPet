@@ -23,6 +23,12 @@ pub enum BehaviorType {
     Surprised,
     Summon,
     Dismiss,
+    // Real Cat behavior cycles:
+    Purr,
+    Knead,
+    Zoomies,
+    Loaf,
+    Hunting,
 }
 
 impl BehaviorType {
@@ -47,12 +53,17 @@ impl BehaviorType {
             Self::Surprised => "surprised",
             Self::Summon => "summon",
             Self::Dismiss => "dismiss",
+            Self::Purr => "purr",
+            Self::Knead => "knead",
+            Self::Zoomies => "zoomies",
+            Self::Loaf => "loaf",
+            Self::Hunting => "hunting",
         }
     }
 
     /// Whether this behavior indicates locomotion (active screen coordinate changes).
     pub fn is_locomotive(&self) -> bool {
-        matches!(self, Self::Walk | Self::Run)
+        matches!(self, Self::Walk | Self::Run | Self::Zoomies)
     }
 
     /// List of mandatory V1 core behaviors for any compliant PetPack.
@@ -91,6 +102,8 @@ pub enum InteractionType {
     Feed,
     Play,
     SleepToggle,
+    Water,
+    Groom,
 }
 
 /// Screen coordinates representing pet placement.

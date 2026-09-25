@@ -159,6 +159,8 @@ async fn main() -> Result<()> {
         (0, 0),
         settings.locale,
         settings.privacy_mode,
+        settings.cat_breed,
+        settings.always_on_top,
         interaction_tx,
         tray_action_tx,
         chat_input_tx,
@@ -385,19 +387,43 @@ async fn main() -> Result<()> {
                             }
                         }
                         "*kuyruğu kabarır ve havaya zıplar* Viyav! Beni şaşırttın! 🙀🐾".to_string()
+                    } else if lower.contains("su")
+                        || lower.contains("içecek")
+                        || lower.contains("susad")
+                    {
+                        let anim_cmd =
+                            beh.handle_interaction(openpet_types::InteractionType::Water);
+                        if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                if let Some(ref cmd) = anim_cmd {
+                                    let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                                }
+                                let _ = tx.send(PetWindowCommand::TriggerAction(
+                                    openpet_types::InteractionType::Water,
+                                ));
+                            }
+                        }
+                        "*şıkırdayan tastan lıkır lıkır taze su içer* Miyav! Su çok taze ve serinleticiydi! 💧🐾".to_string()
                     } else if lower.contains("yıkan")
                         || lower.contains("temizlen")
                         || lower.contains("yalan")
+                        || lower.contains("tara")
+                        || lower.contains("fırça")
+                        || lower.contains("tüy")
                     {
+                        let anim_cmd =
+                            beh.handle_interaction(openpet_types::InteractionType::Groom);
                         if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
                             if let Some(ref tx) = *guard {
-                                let _ = tx.send(PetWindowCommand::PlayAnimation {
-                                    name: "groom_0".to_string(),
-                                    duration_ticks: 24,
-                                });
+                                if let Some(ref cmd) = anim_cmd {
+                                    let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                                }
+                                let _ = tx.send(PetWindowCommand::TriggerAction(
+                                    openpet_types::InteractionType::Groom,
+                                ));
                             }
                         }
-                        "*patisini yalayıp yüzünü temizler* Miyav! Tertemiz ve pırıl pırıl oldum! ✨🐾".to_string()
+                        "*gözlerini kısıp keyifle taranır* Mırrr... Tüylerim yumuşacık ve tertemiz oldu! ✨🐾".to_string()
                     } else if lower.contains("merhaba")
                         || lower.contains("selam")
                         || lower.contains("günaydın")
@@ -537,19 +563,42 @@ async fn main() -> Result<()> {
                             }
                         }
                         "*poofs tail and jumps back* Meow! You surprised me! 🙀🐾".to_string()
+                    } else if lower.contains("water")
+                        || lower.contains("drink")
+                        || lower.contains("thirst")
+                    {
+                        let anim_cmd =
+                            beh.handle_interaction(openpet_types::InteractionType::Water);
+                        if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
+                            if let Some(ref tx) = *guard {
+                                if let Some(ref cmd) = anim_cmd {
+                                    let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                                }
+                                let _ = tx.send(PetWindowCommand::TriggerAction(
+                                    openpet_types::InteractionType::Water,
+                                ));
+                            }
+                        }
+                        "*happily laps fresh water from the bowl* Slurp slurp! So cool and refreshing! 💧🐾".to_string()
                     } else if lower.contains("groom")
                         || lower.contains("wash")
                         || lower.contains("clean")
+                        || lower.contains("brush")
+                        || lower.contains("comb")
                     {
+                        let anim_cmd =
+                            beh.handle_interaction(openpet_types::InteractionType::Groom);
                         if let Ok(guard) = state_chat.pet_cmd_tx.lock() {
                             if let Some(ref tx) = *guard {
-                                let _ = tx.send(PetWindowCommand::PlayAnimation {
-                                    name: "groom_0".to_string(),
-                                    duration_ticks: 24,
-                                });
+                                if let Some(ref cmd) = anim_cmd {
+                                    let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                                }
+                                let _ = tx.send(PetWindowCommand::TriggerAction(
+                                    openpet_types::InteractionType::Groom,
+                                ));
                             }
                         }
-                        "*licks paw and washes face* Meow! Clean and groomed! ✨🐾".to_string()
+                        "*purrs deeply and leans into the soft brush* Purrr... My fur is neat and fluffy! ✨🐾".to_string()
                     } else if lower.contains("hello")
                         || lower.contains("hi")
                         || lower.contains("hey")
@@ -684,10 +733,11 @@ impl openpet_ipc::IpcRequestHandler for HostState {
             }
             IpcRequest::InteractPet(interaction) => {
                 let mut beh = self.behavior.lock().await;
-                if let Some(cmd) = beh.handle_interaction(interaction) {
+                if let Some(cmd) = beh.handle_interaction(interaction.clone()) {
                     if let Ok(guard) = self.pet_cmd_tx.lock() {
                         if let Some(ref tx) = *guard {
                             let _ = tx.send(PetWindowCommand::SetBehavior(cmd.behavior));
+                            let _ = tx.send(PetWindowCommand::TriggerAction(interaction));
                         }
                     }
                 }
@@ -706,6 +756,9 @@ impl openpet_ipc::IpcRequestHandler for HostState {
                         let _ =
                             tx.send(PetWindowCommand::SetPrivacyMode(new_settings.privacy_mode));
                         let _ = tx.send(PetWindowCommand::SetLocale(new_settings.locale));
+                        let _ = tx.send(PetWindowCommand::SetBreed(new_settings.cat_breed));
+                        let _ =
+                            tx.send(PetWindowCommand::SetAlwaysOnTop(new_settings.always_on_top));
                     }
                 }
                 IpcResponse::Ack
@@ -752,6 +805,10 @@ impl openpet_ipc::IpcRequestHandler for HostState {
                 }
             }
             IpcRequest::DeleteReminder(id) => match self.reminders.cancel_reminder(id) {
+                Ok(_) => IpcResponse::Ack,
+                Err(e) => IpcResponse::Error(e.to_string()),
+            },
+            IpcRequest::ToggleReminder(id) => match self.reminders.toggle_reminder(id) {
                 Ok(_) => IpcResponse::Ack,
                 Err(e) => IpcResponse::Error(e.to_string()),
             },

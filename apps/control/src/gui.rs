@@ -1,14 +1,22 @@
 //! # OpenPet Graphical Control Center
 //!
-//! Windows native Control Center GUI providing companion status, chat interface,
-//! desktop reminders management, screen privacy controls, and localized settings (EN/TR).
+//! Windows native Control Center GUI providing companion status, cat care, chat interface,
+//! desktop reminders management, structured memory facts, screen privacy controls, and
+//! localized settings (EN/TR) with a warm Cozy & Pastel theme.
 
-#![allow(clippy::too_many_arguments, clippy::manual_range_contains)]
+#![allow(
+    clippy::too_many_arguments,
+    clippy::manual_range_contains,
+    clippy::manual_is_multiple_of,
+    clippy::unnecessary_cast
+)]
 
 use openpet_i18n::I18nManager;
 use openpet_ipc::{default_pipe_name, IpcClient};
+use openpet_render::MimiSpriteSheet;
 use openpet_types::{
-    AppSettings, IpcRequest, IpcResponse, PetMetadata, PetState, Reminder, SupportedLocale,
+    AppSettings, CatBreed, IpcRequest, IpcResponse, MemoryFact, PetMetadata, PetState, Reminder,
+    SupportedLocale,
 };
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
@@ -17,40 +25,41 @@ use std::sync::{Arc, Mutex};
 use tracing::{error, info};
 use uuid::Uuid;
 
-pub const GUI_WIDTH: i32 = 780;
-pub const GUI_HEIGHT: i32 = 560;
+// Window Layout Dimensions
+pub const GUI_WIDTH: i32 = 940;
+pub const GUI_HEIGHT: i32 = 640;
+pub const SIDEBAR_WIDTH: i32 = 220;
 
 // Tab Indices
 pub const TAB_STATUS: usize = 0;
 pub const TAB_CHAT: usize = 1;
 pub const TAB_REMINDERS: usize = 2;
-pub const TAB_PRIVACY: usize = 3;
-pub const TAB_SETTINGS: usize = 4;
+pub const TAB_MEMORIES: usize = 3;
+pub const TAB_PRIVACY: usize = 4;
+pub const TAB_SETTINGS: usize = 5;
+
+// Cozy & Pastel Kedi Teması Palette (Win32 COLORREF format: 0x00BBGGRR)
+pub const COLOR_BG_CONTENT: u32 = 0x00F9FDFF; // #FFFDF9 - Soft Cream Milk (Content Background)
+pub const COLOR_BG_SIDEBAR: u32 = 0x00EAF3FF; // #FFF3EA - Soft Warm Apricot (Sidebar Background)
+pub const COLOR_CARD_BG: u32 = 0x00F0F8FF; // #FFF8F0 - Cream Card Background
+pub const COLOR_CARD_BORDER: u32 = 0x00DBE8FF; // #FFE8DB - Gentle Card Border
+pub const COLOR_PEACH_ACCENT: u32 = 0x0076ABFF; // #FFAB76 - Warm Peach Accent
+pub const COLOR_PEACH_LIGHT: u32 = 0x00B8D8FF; // #FFD8B8 - Soft Peach Pill / Active Tab
+pub const COLOR_CORAL_PINK: u32 = 0x00A6AAFF; // #FFAAA6 - Pastel Pink / Coral Accent
+pub const COLOR_MINT_GREEN: u32 = 0x00D0EBB8; // #B8EBD0 - Soft Mint Green
+pub const COLOR_DARK_GREEN: u32 = 0x00578B2E; // #2E8B57 - Sea Green for active / online
+pub const COLOR_TEXT_COCOA: u32 = 0x003D3E4A; // #4A3E3D - Espresso / Cocoa Brown Text
+pub const COLOR_TEXT_MUTED: u32 = 0x00797B8D; // #8D7B79 - Muted Cocoa Subtext
+pub const COLOR_DANGER_RED: u32 = 0x007576FF; // #FF7675 - Soft Red / Delete
+pub const COLOR_PROGRESS_TRACK: u32 = 0x00DEE5F0; // #F0E5DE - Progress Bar Track
+pub const COLOR_SKY_BLUE: u32 = 0x00FFB070; // Soft Sky Blue (Water / Susuzluk)
+pub const COLOR_HONEY_GOLD: u32 = 0x0068D5F6; // Soft Honey Gold (Energy / Enerji)
 
 // Control IDs
-pub const ID_BTN_TAB_STATUS: usize = 2001;
-pub const ID_BTN_TAB_CHAT: usize = 2002;
-pub const ID_BTN_TAB_REMINDERS: usize = 2003;
-pub const ID_BTN_TAB_PRIVACY: usize = 2004;
-pub const ID_BTN_TAB_SETTINGS: usize = 2005;
-
-pub const ID_BTN_PET: usize = 2101;
-pub const ID_BTN_FEED: usize = 2102;
-pub const ID_BTN_PLAY: usize = 2103;
-pub const ID_BTN_START_HOST: usize = 2104;
-
 pub const ID_EDIT_CHAT: usize = 2201;
-pub const ID_BTN_SEND_CHAT: usize = 2202;
-
 pub const ID_EDIT_REM_TITLE: usize = 2301;
 pub const ID_EDIT_REM_BODY: usize = 2302;
-pub const ID_BTN_ADD_REM: usize = 2303;
-
-pub const ID_BTN_TOGGLE_PRIVACY: usize = 2401;
-
-pub const ID_BTN_LANG_EN: usize = 2501;
-pub const ID_BTN_LANG_TR: usize = 2502;
-pub const ID_BTN_SAVE_SETTINGS: usize = 2503;
+pub const ID_EDIT_MEM_SEARCH: usize = 2401;
 
 /// Shared application state rendered by the GUI.
 pub struct ControlCenterState {
@@ -63,10 +72,13 @@ pub struct ControlCenterState {
     pub privacy_mode: bool,
     pub chat_history: Vec<(String, String)>, // (Sender, Message)
     pub reminders: Vec<Reminder>,
+    pub memories: Vec<MemoryFact>,
     pub settings: AppSettings,
     pub status_feedback: String,
     pub runtime_handle: tokio::runtime::Handle,
     pub shutdown_flag: Arc<AtomicBool>,
+    pub sprite_sheet: MimiSpriteSheet,
+    pub frame_counter: u32,
 
     // Win32 child control HWNDs
     #[cfg(windows)]
@@ -77,6 +89,8 @@ pub struct ControlCenterState {
     pub hwnd_rem_title: windows_sys::Win32::Foundation::HWND,
     #[cfg(windows)]
     pub hwnd_rem_body: windows_sys::Win32::Foundation::HWND,
+    #[cfg(windows)]
+    pub hwnd_mem_search: windows_sys::Win32::Foundation::HWND,
 }
 
 #[cfg(windows)]
@@ -86,12 +100,12 @@ unsafe extern "system" fn control_center_wndproc(
     wparam: windows_sys::Win32::Foundation::WPARAM,
     lparam: windows_sys::Win32::Foundation::LPARAM,
 ) -> windows_sys::Win32::Foundation::LRESULT {
-    use windows_sys::Win32::Foundation::{COLORREF, RECT};
+    use windows_sys::Win32::Foundation::RECT;
     use windows_sys::Win32::Graphics::Gdi::{
-        BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW,
-        CreateSolidBrush, DeleteDC, DeleteObject, EndPaint, FillRect, InvalidateRect, SelectObject,
-        SetBkColor, SetBkMode, SetTextColor, TextOutW, FW_BOLD, FW_NORMAL, PAINTSTRUCT, SRCCOPY,
-        TRANSPARENT,
+        BeginPaint, BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, CreateFontW, CreatePen,
+        CreateSolidBrush, DeleteDC, DeleteObject, EndPaint, FillRect, InvalidateRect, LineTo,
+        MoveToEx, SelectObject, SetBkColor, SetBkMode, SetTextColor, FW_BOLD, FW_NORMAL,
+        PAINTSTRUCT, PS_SOLID, SRCCOPY, TRANSPARENT,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         DefWindowProcW, DestroyWindow, GetWindowLongPtrW, PostQuitMessage, GWLP_USERDATA, WM_CLOSE,
@@ -114,31 +128,21 @@ unsafe extern "system" fn control_center_wndproc(
                 let hbitmap = CreateCompatibleBitmap(hdc, GUI_WIDTH, GUI_HEIGHT);
                 let old_bmp = SelectObject(mem_dc, hbitmap);
 
-                // Palette definitions (Modern Fluent / Catppuccin Dark)
-                let color_sidebar: COLORREF = 0x00251818; // #181825
-                let color_content: COLORREF = 0x002E1E1E; // #1E1E2E
-                let color_card: COLORREF = 0x00443231; // #313244
-                let color_accent: COLORREF = 0x00FAB489; // #89B4FA
-                let color_text: COLORREF = 0x00F4D6CD; // #CDD6F4
-                let color_subtext: COLORREF = 0x00C8ADA6; // #A6ADC8
-                let color_green: COLORREF = 0x00A1E3A6; // #A6E3A1
-                let color_red: COLORREF = 0x00A88BF3; // #F38BA8
-
-                // Draw Sidebar
-                let brush_sidebar = CreateSolidBrush(color_sidebar);
+                // 1. Draw Sidebar Background
+                let brush_sidebar = CreateSolidBrush(COLOR_BG_SIDEBAR);
                 let rect_sidebar = RECT {
                     left: 0,
                     top: 0,
-                    right: 200,
+                    right: SIDEBAR_WIDTH,
                     bottom: GUI_HEIGHT,
                 };
                 FillRect(mem_dc, &rect_sidebar, brush_sidebar);
                 DeleteObject(brush_sidebar);
 
-                // Draw Content Area
-                let brush_content = CreateSolidBrush(color_content);
+                // 2. Draw Content Area Background
+                let brush_content = CreateSolidBrush(COLOR_BG_CONTENT);
                 let rect_content = RECT {
-                    left: 200,
+                    left: SIDEBAR_WIDTH,
                     top: 0,
                     right: GUI_WIDTH,
                     bottom: GUI_HEIGHT,
@@ -146,16 +150,24 @@ unsafe extern "system" fn control_center_wndproc(
                 FillRect(mem_dc, &rect_content, brush_content);
                 DeleteObject(brush_content);
 
+                // 3. Draw Vertical Divider Line between sidebar and content
+                let divider_pen = CreatePen(PS_SOLID, 1, COLOR_CARD_BORDER);
+                let old_p = SelectObject(mem_dc, divider_pen);
+                MoveToEx(mem_dc, SIDEBAR_WIDTH, 0, std::ptr::null_mut());
+                LineTo(mem_dc, SIDEBAR_WIDTH, GUI_HEIGHT);
+                SelectObject(mem_dc, old_p);
+                DeleteObject(divider_pen);
+
                 SetBkMode(mem_dc, TRANSPARENT as i32);
 
-                // Fonts
+                // Modern Fonts
                 let font_name: Vec<u16> = OsStr::new("Segoe UI")
                     .encode_wide()
                     .chain(std::iter::once(0))
                     .collect();
 
                 let hfont_title = CreateFontW(
-                    24,
+                    22,
                     0,
                     0,
                     0,
@@ -170,7 +182,7 @@ unsafe extern "system" fn control_center_wndproc(
                     0,
                     font_name.as_ptr(),
                 );
-                let hfont_bold = CreateFontW(
+                let hfont_subtitle = CreateFontW(
                     17,
                     0,
                     0,
@@ -186,8 +198,40 @@ unsafe extern "system" fn control_center_wndproc(
                     0,
                     font_name.as_ptr(),
                 );
-                let hfont_regular = CreateFontW(
+                let hfont_bold = CreateFontW(
                     15,
+                    0,
+                    0,
+                    0,
+                    FW_BOLD as i32,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    font_name.as_ptr(),
+                );
+                let hfont_regular = CreateFontW(
+                    14,
+                    0,
+                    0,
+                    0,
+                    FW_NORMAL as i32,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    font_name.as_ptr(),
+                );
+                let hfont_small = CreateFontW(
+                    12,
                     0,
                     0,
                     0,
@@ -203,42 +247,28 @@ unsafe extern "system" fn control_center_wndproc(
                     font_name.as_ptr(),
                 );
 
-                // Sidebar Header: App Title
+                // Sidebar Header: App Title & Cute Paw
                 SelectObject(mem_dc, hfont_title);
-                SetTextColor(mem_dc, color_accent);
-                let app_title: Vec<u16> = OsStr::new("OpenPet")
-                    .encode_wide()
-                    .chain(std::iter::once(0))
-                    .collect();
-                TextOutW(
-                    mem_dc,
-                    24,
-                    22,
-                    app_title.as_ptr(),
-                    app_title.len() as i32 - 1,
-                );
+                SetTextColor(mem_dc, COLOR_TEXT_COCOA);
+                draw_str(mem_dc, 22, 18, "OpenPet 🐾");
 
-                SelectObject(mem_dc, hfont_regular);
-                SetTextColor(mem_dc, color_subtext);
+                SelectObject(mem_dc, hfont_small);
+                SetTextColor(mem_dc, COLOR_TEXT_MUTED);
                 let sub_text = if state_guard.locale == SupportedLocale::TrTr {
-                    "Masaüstü Dostu"
+                    "Masaüstü Dostu & Bakım"
                 } else {
-                    "Desktop Companion"
+                    "Desktop Companion & Care"
                 };
-                let wide_sub: Vec<u16> = OsStr::new(sub_text)
-                    .encode_wide()
-                    .chain(std::iter::once(0))
-                    .collect();
-                TextOutW(mem_dc, 24, 52, wide_sub.as_ptr(), wide_sub.len() as i32 - 1);
+                draw_str(mem_dc, 24, 46, sub_text);
 
-                // Sidebar Navigation Tabs
+                // Sidebar Navigation Tabs (6 Tabs)
                 let tabs = [
                     (
                         TAB_STATUS,
                         if state_guard.locale == SupportedLocale::TrTr {
-                            "🏠  Durum"
+                            "🐾  Durum & Bakım"
                         } else {
-                            "🏠  Status"
+                            "🐾  Status & Care"
                         },
                     ),
                     (
@@ -246,7 +276,7 @@ unsafe extern "system" fn control_center_wndproc(
                         if state_guard.locale == SupportedLocale::TrTr {
                             "💬  Sohbet"
                         } else {
-                            "💬  Chat"
+                            "💬  Cozy Chat"
                         },
                     ),
                     (
@@ -255,6 +285,14 @@ unsafe extern "system" fn control_center_wndproc(
                             "⏰  Hatırlatıcılar"
                         } else {
                             "⏰  Reminders"
+                        },
+                    ),
+                    (
+                        TAB_MEMORIES,
+                        if state_guard.locale == SupportedLocale::TrTr {
+                            "🧠  Hatıralar"
+                        } else {
+                            "🧠  Memories"
                         },
                     ),
                     (
@@ -276,80 +314,55 @@ unsafe extern "system" fn control_center_wndproc(
                 ];
 
                 for (idx, (_, label)) in tabs.iter().enumerate() {
-                    let y = 95 + (idx as i32 * 45);
+                    let y = 80 + (idx as i32 * 46);
                     let is_active = state_guard.active_tab == idx;
 
                     if is_active {
-                        let tab_brush = CreateSolidBrush(color_card);
-                        let tab_rect = RECT {
-                            left: 12,
-                            top: y - 5,
-                            right: 188,
-                            bottom: y + 32,
-                        };
-                        FillRect(mem_dc, &tab_rect, tab_brush);
-                        DeleteObject(tab_brush);
+                        // Active tab pill
+                        draw_card(
+                            mem_dc,
+                            12,
+                            y - 4,
+                            208,
+                            y + 36,
+                            COLOR_PEACH_LIGHT,
+                            COLOR_PEACH_ACCENT,
+                        );
 
-                        // Highlight pill
-                        let pill_brush = CreateSolidBrush(color_accent);
-                        let pill_rect = RECT {
+                        // Highlight strip on left
+                        let strip_brush = CreateSolidBrush(COLOR_PEACH_ACCENT);
+                        let strip_rect = RECT {
                             left: 12,
                             top: y - 2,
-                            right: 16,
-                            bottom: y + 29,
+                            right: 17,
+                            bottom: y + 34,
                         };
-                        FillRect(mem_dc, &pill_rect, pill_brush);
-                        DeleteObject(pill_brush);
+                        FillRect(mem_dc, &strip_rect, strip_brush);
+                        DeleteObject(strip_brush);
 
                         SelectObject(mem_dc, hfont_bold);
-                        SetTextColor(mem_dc, color_accent);
+                        SetTextColor(mem_dc, COLOR_TEXT_COCOA);
                     } else {
                         SelectObject(mem_dc, hfont_regular);
-                        SetTextColor(mem_dc, color_text);
+                        SetTextColor(mem_dc, COLOR_TEXT_COCOA);
                     }
 
-                    let wide_label: Vec<u16> = OsStr::new(label)
-                        .encode_wide()
-                        .chain(std::iter::once(0))
-                        .collect();
-                    TextOutW(
-                        mem_dc,
-                        28,
-                        y + 2,
-                        wide_label.as_ptr(),
-                        wide_label.len() as i32 - 1,
-                    );
+                    draw_str(mem_dc, 26, y + 5, label);
                 }
 
-                // Sidebar Footer: Connection Badge
-                SelectObject(mem_dc, hfont_regular);
+                // Sidebar Footer: Connection Badge & Author
+                SelectObject(mem_dc, hfont_bold);
                 if state_guard.is_connected {
-                    SetTextColor(mem_dc, color_green);
-                    let conn_text: Vec<u16> = OsStr::new("● ONLINE (Host)")
-                        .encode_wide()
-                        .chain(std::iter::once(0))
-                        .collect();
-                    TextOutW(
-                        mem_dc,
-                        24,
-                        GUI_HEIGHT - 45,
-                        conn_text.as_ptr(),
-                        conn_text.len() as i32 - 1,
-                    );
+                    SetTextColor(mem_dc, COLOR_DARK_GREEN);
+                    draw_str(mem_dc, 22, GUI_HEIGHT - 65, "● ÇEVRİMİÇİ (Host)");
                 } else {
-                    SetTextColor(mem_dc, color_red);
-                    let conn_text: Vec<u16> = OsStr::new("○ OFFLINE")
-                        .encode_wide()
-                        .chain(std::iter::once(0))
-                        .collect();
-                    TextOutW(
-                        mem_dc,
-                        24,
-                        GUI_HEIGHT - 45,
-                        conn_text.as_ptr(),
-                        conn_text.len() as i32 - 1,
-                    );
+                    SetTextColor(mem_dc, COLOR_DANGER_RED);
+                    draw_str(mem_dc, 22, GUI_HEIGHT - 65, "○ ÇEVRİMDIŞI");
                 }
+
+                SelectObject(mem_dc, hfont_small);
+                SetTextColor(mem_dc, COLOR_TEXT_MUTED);
+                draw_str(mem_dc, 22, GUI_HEIGHT - 40, "v0.1.0-alpha • Tiyatrotist");
 
                 // Render Content View based on active_tab
                 match state_guard.active_tab {
@@ -357,34 +370,30 @@ unsafe extern "system" fn control_center_wndproc(
                         mem_dc,
                         &state_guard,
                         hfont_title,
+                        hfont_subtitle,
                         hfont_bold,
                         hfont_regular,
-                        color_card,
-                        color_text,
-                        color_subtext,
-                        color_accent,
-                        color_green,
                     ),
                     TAB_CHAT => render_tab_chat(
                         mem_dc,
                         &state_guard,
+                        hfont_title,
                         hfont_bold,
                         hfont_regular,
-                        color_card,
-                        color_text,
-                        color_subtext,
-                        color_accent,
                     ),
                     TAB_REMINDERS => render_tab_reminders(
                         mem_dc,
                         &state_guard,
+                        hfont_title,
                         hfont_bold,
                         hfont_regular,
-                        color_card,
-                        color_text,
-                        color_subtext,
-                        color_accent,
-                        color_green,
+                    ),
+                    TAB_MEMORIES => render_tab_memories(
+                        mem_dc,
+                        &state_guard,
+                        hfont_title,
+                        hfont_bold,
+                        hfont_regular,
                     ),
                     TAB_PRIVACY => render_tab_privacy(
                         mem_dc,
@@ -392,11 +401,6 @@ unsafe extern "system" fn control_center_wndproc(
                         hfont_title,
                         hfont_bold,
                         hfont_regular,
-                        color_card,
-                        color_text,
-                        color_subtext,
-                        color_accent,
-                        color_green,
                     ),
                     TAB_SETTINGS => render_tab_settings(
                         mem_dc,
@@ -404,10 +408,6 @@ unsafe extern "system" fn control_center_wndproc(
                         hfont_title,
                         hfont_bold,
                         hfont_regular,
-                        color_card,
-                        color_text,
-                        color_subtext,
-                        color_accent,
                     ),
                     _ => {}
                 }
@@ -418,20 +418,22 @@ unsafe extern "system" fn control_center_wndproc(
                 SelectObject(mem_dc, old_bmp);
                 DeleteObject(hbitmap);
                 DeleteObject(hfont_title);
+                DeleteObject(hfont_subtitle);
                 DeleteObject(hfont_bold);
                 DeleteObject(hfont_regular);
+                DeleteObject(hfont_small);
                 DeleteDC(mem_dc);
                 EndPaint(hwnd, &ps);
             }
             0
         }
         WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC => {
-            // Style child edit inputs and static labels dark
+            // Style child edit inputs and static labels with cozy cream background & cocoa text
             use windows_sys::Win32::Graphics::Gdi::CreateSolidBrush;
-            let brush = CreateSolidBrush(0x00443231);
+            let brush = CreateSolidBrush(COLOR_CARD_BG);
             let hdc = wparam as isize as *mut std::ffi::c_void;
-            SetBkColor(hdc, 0x00443231);
-            SetTextColor(hdc, 0x00F4D6CD);
+            SetBkColor(hdc, COLOR_CARD_BG);
+            SetTextColor(hdc, COLOR_TEXT_COCOA);
             brush as isize
         }
         WM_LBUTTONDOWN => {
@@ -441,10 +443,10 @@ unsafe extern "system" fn control_center_wndproc(
                 let pt_y = ((lparam >> 16) & 0xFFFF) as i16 as i32;
 
                 // 1. Sidebar Tab Click Check
-                if pt_x >= 12 && pt_x <= 188 {
-                    for i in 0..5 {
-                        let y = 95 + (i * 45);
-                        if pt_y >= y - 5 && pt_y <= y + 32 {
+                if pt_x >= 12 && pt_x <= 208 {
+                    for i in 0..6 {
+                        let y = 80 + (i * 46);
+                        if pt_y >= y - 4 && pt_y <= y + 36 {
                             state_guard.active_tab = i as usize;
                             update_child_controls_visibility(&state_guard);
                             InvalidateRect(hwnd, std::ptr::null(), 0);
@@ -456,27 +458,10 @@ unsafe extern "system" fn control_center_wndproc(
                 // 2. Tab-specific interactive button hit testing
                 match state_guard.active_tab {
                     TAB_STATUS => {
-                        // Quick interaction buttons
-                        // [ Pet Mimi ] at (230, 230, 340, 265)
-                        if pt_x >= 230 && pt_x <= 340 && pt_y >= 230 && pt_y <= 265 {
-                            info!("GUI Action: Pet active companion");
-                            send_ipc_async(
-                                &state_guard,
-                                IpcRequest::InteractPet(openpet_types::InteractionType::Petting {
-                                    intensity: 1.0,
-                                }),
-                            );
-                            state_guard.status_feedback =
-                                if state_guard.locale == SupportedLocale::TrTr {
-                                    "Mimi mırıldanarak başını eline yasladı! ❤️".into()
-                                } else {
-                                    "Mimi purred and leaned into your hand! ❤️".into()
-                                };
-                            InvalidateRect(hwnd, std::ptr::null(), 0);
-                        }
-                        // [ Feed Fish ] at (355, 230, 465, 265)
-                        if pt_x >= 355 && pt_x <= 465 && pt_y >= 230 && pt_y <= 265 {
-                            info!("GUI Action: Feed active companion");
+                        // Quick Care Buttons at y = 250..290:
+                        // 1. Feed: 248..373
+                        if pt_y >= 250 && pt_y <= 290 && pt_x >= 248 && pt_x <= 373 {
+                            info!("GUI Action: Feed companion");
                             send_ipc_async(
                                 &state_guard,
                                 IpcRequest::InteractPet(openpet_types::InteractionType::Feed),
@@ -485,31 +470,118 @@ unsafe extern "system" fn control_center_wndproc(
                                 if state_guard.locale == SupportedLocale::TrTr {
                                     "Mimi lezzetli balığı afiyetle yedi! 🐟".into()
                                 } else {
-                                    "Mimi happily munched on fresh salmon! 🐟".into()
+                                    "Mimi happily ate the delicious fish! 🐟".into()
                                 };
                             InvalidateRect(hwnd, std::ptr::null(), 0);
                         }
-                        // [ Play ] at (480, 230, 590, 265)
-                        if pt_x >= 480 && pt_x <= 590 && pt_y >= 230 && pt_y <= 265 {
-                            info!("GUI Action: Play with active companion");
+                        // 2. Water: 383..508
+                        if pt_y >= 250 && pt_y <= 290 && pt_x >= 383 && pt_x <= 508 {
+                            info!("GUI Action: Water companion");
+                            send_ipc_async(
+                                &state_guard,
+                                IpcRequest::InteractPet(openpet_types::InteractionType::Water),
+                            );
+                            state_guard.status_feedback =
+                                if state_guard.locale == SupportedLocale::TrTr {
+                                    "Mimi taze ve serin suyu lıkır lıkır içti! 💧".into()
+                                } else {
+                                    "Mimi happily lapped up fresh water! 💧".into()
+                                };
+                            InvalidateRect(hwnd, std::ptr::null(), 0);
+                        }
+                        // 3. Groom: 518..643
+                        if pt_y >= 250 && pt_y <= 290 && pt_x >= 518 && pt_x <= 643 {
+                            info!("GUI Action: Groom companion");
+                            send_ipc_async(
+                                &state_guard,
+                                IpcRequest::InteractPet(openpet_types::InteractionType::Groom),
+                            );
+                            state_guard.status_feedback =
+                                if state_guard.locale == SupportedLocale::TrTr {
+                                    "Mimi keyifle mırıldanarak tarandı, tüyleri yumuşacık oldu! ✨"
+                                        .into()
+                                } else {
+                                    "Mimi purred as you brushed its coat! ✨".into()
+                                };
+                            InvalidateRect(hwnd, std::ptr::null(), 0);
+                        }
+                        // 4. Play: 653..778
+                        if pt_y >= 250 && pt_y <= 290 && pt_x >= 653 && pt_x <= 778 {
+                            info!("GUI Action: Play with companion");
                             send_ipc_async(
                                 &state_guard,
                                 IpcRequest::InteractPet(openpet_types::InteractionType::Play),
                             );
                             state_guard.status_feedback =
                                 if state_guard.locale == SupportedLocale::TrTr {
-                                    "Mimi heyecanla zıplayarak oynamaya başladı! 🎾".into()
+                                    "Mimi neşeyle zıplayarak oynamaya başladı! 🎾".into()
                                 } else {
-                                    "Mimi bounced playfully around! 🎾".into()
+                                    "Mimi jumped excitedly to play with you! 🎾".into()
                                 };
                             InvalidateRect(hwnd, std::ptr::null(), 0);
                         }
-                        // [ Start Host ] if offline at (230, 350, 430, 385)
+                        // 5. Pet: 788..913
+                        if pt_y >= 250 && pt_y <= 290 && pt_x >= 788 && pt_x <= 913 {
+                            info!("GUI Action: Pet companion");
+                            send_ipc_async(
+                                &state_guard,
+                                IpcRequest::InteractPet(openpet_types::InteractionType::Petting {
+                                    intensity: 1.0,
+                                }),
+                            );
+                            state_guard.status_feedback =
+                                if state_guard.locale == SupportedLocale::TrTr {
+                                    "Mimi mırıldanarak sevgine karşılık verdi! ❤️".into()
+                                } else {
+                                    "Mimi purred warmly under your gentle touch! ❤️".into()
+                                };
+                            InvalidateRect(hwnd, std::ptr::null(), 0);
+                        }
+
+                        // Breed Selector Chips at y = 365..400:
+                        if pt_y >= 365 && pt_y <= 400 {
+                            let breeds = [
+                                (265, 345, CatBreed::Tabby),
+                                (353, 438, CatBreed::Tuxedo),
+                                (446, 521, CatBreed::Calico),
+                                (529, 614, CatBreed::Ginger),
+                                (622, 702, CatBreed::Siamese),
+                                (710, 785, CatBreed::Black),
+                                (793, 873, CatBreed::White),
+                            ];
+                            for (x0, x1, breed) in breeds {
+                                if pt_x >= x0 && pt_x <= x1 {
+                                    state_guard.settings.cat_breed = breed;
+                                    state_guard.sprite_sheet =
+                                        MimiSpriteSheet::generate_for_breed(breed);
+                                    send_ipc_async(
+                                        &state_guard,
+                                        IpcRequest::UpdateSettings(state_guard.settings.clone()),
+                                    );
+                                    state_guard.status_feedback =
+                                        if state_guard.locale == SupportedLocale::TrTr {
+                                            format!(
+                                                "Kedi ırkı değiştirildi: {} 🐾",
+                                                breed.display_name(true)
+                                            )
+                                        } else {
+                                            format!(
+                                                "Companion breed switched to: {} 🐾",
+                                                breed.display_name(false)
+                                            )
+                                        };
+                                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Launch Host Button if offline at (265..530, 535..575)
                         if !state_guard.is_connected
-                            && pt_x >= 230
-                            && pt_x <= 430
-                            && pt_y >= 350
-                            && pt_y <= 385
+                            && pt_x >= 265
+                            && pt_x <= 530
+                            && pt_y >= 535
+                            && pt_y <= 575
                         {
                             info!("GUI Action: Launch OpenPet Host");
                             launch_host_process();
@@ -523,32 +595,219 @@ unsafe extern "system" fn control_center_wndproc(
                         }
                     }
                     TAB_CHAT => {
-                        // [ Send Button ] at (675, 480, 750, 515)
-                        if pt_x >= 675 && pt_x <= 750 && pt_y >= 480 && pt_y <= 515 {
+                        // Quick conversational chips at y = 478..510
+                        if pt_y >= 478 && pt_y <= 510 {
+                            let chips = if state_guard.locale == SupportedLocale::TrTr {
+                                [
+                                    (248, 365, "Nasılsın? 🐾"),
+                                    (373, 513, "Seni seviyorum! ❤️"),
+                                    (521, 666, "Mola verelim mi? ☕"),
+                                    (674, 804, "Balık ister misin? 🐟"),
+                                    (812, 915, "Oyun oynayalım! 🧶"),
+                                ]
+                            } else {
+                                [
+                                    (248, 365, "How are you? 🐾"),
+                                    (373, 513, "I love you! ❤️"),
+                                    (521, 666, "Take a break? ☕"),
+                                    (674, 804, "Want a fish? 🐟"),
+                                    (812, 915, "Let's play! 🧶"),
+                                ]
+                            };
+
+                            for (x0, x1, text) in chips {
+                                if pt_x >= x0 && pt_x <= x1 {
+                                    send_chat_message_text(&mut state_guard, text.to_string());
+                                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Send Button at (818..915, 525..563)
+                        if pt_x >= 818 && pt_x <= 915 && pt_y >= 525 && pt_y <= 563 {
                             handle_send_chat(&mut state_guard);
                             InvalidateRect(hwnd, std::ptr::null(), 0);
                         }
                     }
                     TAB_REMINDERS => {
-                        // [ Add Reminder Button ] at (630, 475, 750, 510)
-                        if pt_x >= 630 && pt_x <= 750 && pt_y >= 475 && pt_y <= 510 {
+                        // Quick preset reminder chips at y = 70..102
+                        if pt_y >= 70 && pt_y <= 102 {
+                            let is_tr = state_guard.locale == SupportedLocale::TrTr;
+                            let presets = [
+                                (
+                                    248,
+                                    395,
+                                    if is_tr {
+                                        "💧 Su Vakti!"
+                                    } else {
+                                        "💧 Hydration Time!"
+                                    },
+                                    if is_tr {
+                                        "Bir bardak serin su içip ferahla."
+                                    } else {
+                                        "Drink a fresh glass of water."
+                                    },
+                                    30,
+                                ),
+                                (
+                                    405,
+                                    575,
+                                    if is_tr {
+                                        "🧘 Postür Düzelt!"
+                                    } else {
+                                        "🧘 Posture Check!"
+                                    },
+                                    if is_tr {
+                                        "Omuzlarını geriye al ve dik otur."
+                                    } else {
+                                        "Roll shoulders back and sit upright."
+                                    },
+                                    45,
+                                ),
+                                (
+                                    585,
+                                    750,
+                                    if is_tr {
+                                        "👀 20-20-20 Kuralı!"
+                                    } else {
+                                        "👀 Rest Your Eyes!"
+                                    },
+                                    if is_tr {
+                                        "20 saniye boyunca 6 metre uzağa bak."
+                                    } else {
+                                        "Look 20 feet away for 20 seconds."
+                                    },
+                                    20,
+                                ),
+                                (
+                                    760,
+                                    915,
+                                    if is_tr {
+                                        "🚶 Kısa Bir Mola!"
+                                    } else {
+                                        "🚶 Quick Stretch!"
+                                    },
+                                    if is_tr {
+                                        "Ayağa kalk, esne ve birkaç adım yürü."
+                                    } else {
+                                        "Stand up, stretch and walk around."
+                                    },
+                                    60,
+                                ),
+                            ];
+
+                            for (x0, x1, title, body, mins) in presets {
+                                if pt_x >= x0 && pt_x <= x1 {
+                                    schedule_quick_reminder(&mut state_guard, title, body, mins);
+                                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Delete reminder buttons [❌ Sil]
+                        // Toggle reminder button [Aktif / Kapalı]
+                        let rem_count = state_guard.reminders.len().min(5);
+                        for idx in 0..rem_count {
+                            let y = 125 + (idx as i32 * 64);
+                            if pt_x >= 740 && pt_x <= 825 && pt_y >= y + 10 && pt_y <= y + 42 {
+                                let rem_id = state_guard.reminders[idx].id;
+                                state_guard.reminders[idx].enabled =
+                                    !state_guard.reminders[idx].enabled;
+                                send_ipc_async(&state_guard, IpcRequest::ToggleReminder(rem_id));
+                                InvalidateRect(hwnd, std::ptr::null(), 0);
+                                break;
+                            }
+                        }
+
+                        // Delete reminder buttons [❌ Sil]
+                        for idx in 0..rem_count {
+                            let y = 125 + (idx as i32 * 64);
+                            if pt_x >= 835 && pt_x <= 895 && pt_y >= y + 10 && pt_y <= y + 42 {
+                                let rem_id = state_guard.reminders[idx].id;
+                                send_ipc_async(&state_guard, IpcRequest::DeleteReminder(rem_id));
+                                state_guard.reminders.remove(idx);
+                                InvalidateRect(hwnd, std::ptr::null(), 0);
+                                break;
+                            }
+                        }
+
+                        // Add Custom Reminder Button at (705..898, 504..574)
+                        if pt_x >= 705 && pt_x <= 898 && pt_y >= 504 && pt_y <= 574 {
                             handle_add_reminder(&mut state_guard);
                             InvalidateRect(hwnd, std::ptr::null(), 0);
                         }
                     }
+                    TAB_MEMORIES => {
+                        // Clear / All search buttons at (740..820 and 828..895, y: 72..100)
+                        if pt_y >= 72
+                            && pt_y <= 100
+                            && ((pt_x >= 740 && pt_x <= 820) || (pt_x >= 828 && pt_x <= 895))
+                        {
+                            use windows_sys::Win32::UI::WindowsAndMessaging::SetWindowTextW;
+                            let empty: [u16; 1] = [0];
+                            unsafe {
+                                SetWindowTextW(state_guard.hwnd_mem_search, empty.as_ptr());
+                            }
+                            InvalidateRect(hwnd, std::ptr::null(), 0);
+                        }
+
+                        // Delete memory button [❌ Unut] for filtered items
+                        let query = get_mem_search_query(state_guard.hwnd_mem_search);
+                        let filtered_ids: Vec<Uuid> = state_guard
+                            .memories
+                            .iter()
+                            .filter(|m| {
+                                if query.is_empty() {
+                                    true
+                                } else {
+                                    m.subject.to_lowercase().contains(&query)
+                                        || m.predicate.to_lowercase().contains(&query)
+                                        || m.object.to_lowercase().contains(&query)
+                                }
+                            })
+                            .map(|m| m.id)
+                            .collect();
+
+                        let count = filtered_ids.len().min(5);
+                        for (idx, mem_id) in filtered_ids.iter().take(count).enumerate() {
+                            let y = 122 + (idx as i32 * 68);
+                            if pt_x >= 825 && pt_x <= 895 && pt_y >= y + 12 && pt_y <= y + 48 {
+                                let mem_id = *mem_id;
+                                send_ipc_async(&state_guard, IpcRequest::DeleteMemory(mem_id));
+                                state_guard.memories.retain(|m| m.id != mem_id);
+                                InvalidateRect(hwnd, std::ptr::null(), 0);
+                                break;
+                            }
+                        }
+                    }
                     TAB_PRIVACY => {
-                        // [ Toggle Privacy Button ] at (230, 220, 470, 265)
-                        if pt_x >= 230 && pt_x <= 470 && pt_y >= 220 && pt_y <= 265 {
+                        // Toggle Privacy Mode Button at (248..680, 340..405)
+                        if pt_x >= 248 && pt_x <= 680 && pt_y >= 340 && pt_y <= 405 {
                             let next = !state_guard.privacy_mode;
                             state_guard.privacy_mode = next;
+                            state_guard.settings.privacy_mode = next;
                             info!("GUI Action: Toggled privacy mode to {}", next);
                             send_ipc_async(&state_guard, IpcRequest::SetPrivacyMode(next));
                             InvalidateRect(hwnd, std::ptr::null(), 0);
                         }
                     }
                     TAB_SETTINGS => {
-                        // [ English Button ] at (230, 110, 340, 145)
-                        if pt_x >= 230 && pt_x <= 340 && pt_y >= 110 && pt_y <= 145 {
+                        // Interface Language Buttons:
+                        // Türkçe at (248..410, 105..150)
+                        if pt_x >= 248 && pt_x <= 410 && pt_y >= 105 && pt_y <= 150 {
+                            state_guard.locale = SupportedLocale::TrTr;
+                            state_guard.i18n.set_locale(SupportedLocale::TrTr);
+                            state_guard.settings.locale = SupportedLocale::TrTr;
+                            send_ipc_async(
+                                &state_guard,
+                                IpcRequest::UpdateSettings(state_guard.settings.clone()),
+                            );
+                            InvalidateRect(hwnd, std::ptr::null(), 0);
+                        }
+                        // English at (425..585, 105..150)
+                        if pt_x >= 425 && pt_x <= 585 && pt_y >= 105 && pt_y <= 150 {
                             state_guard.locale = SupportedLocale::EnUs;
                             state_guard.i18n.set_locale(SupportedLocale::EnUs);
                             state_guard.settings.locale = SupportedLocale::EnUs;
@@ -558,11 +817,50 @@ unsafe extern "system" fn control_center_wndproc(
                             );
                             InvalidateRect(hwnd, std::ptr::null(), 0);
                         }
-                        // [ Türkçe Button ] at (360, 110, 470, 145)
-                        if pt_x >= 360 && pt_x <= 470 && pt_y >= 110 && pt_y <= 145 {
-                            state_guard.locale = SupportedLocale::TrTr;
-                            state_guard.i18n.set_locale(SupportedLocale::TrTr);
-                            state_guard.settings.locale = SupportedLocale::TrTr;
+
+                        // Cat Breed Buttons at y = 205..245:
+                        if pt_y >= 205 && pt_y <= 245 {
+                            let breeds = [
+                                (248, 328, CatBreed::Tabby),
+                                (336, 421, CatBreed::Tuxedo),
+                                (429, 504, CatBreed::Calico),
+                                (512, 597, CatBreed::Ginger),
+                                (605, 685, CatBreed::Siamese),
+                                (693, 768, CatBreed::Black),
+                                (776, 856, CatBreed::White),
+                            ];
+                            for (x0, x1, breed) in breeds {
+                                if pt_x >= x0 && pt_x <= x1 {
+                                    state_guard.settings.cat_breed = breed;
+                                    state_guard.sprite_sheet =
+                                        MimiSpriteSheet::generate_for_breed(breed);
+                                    send_ipc_async(
+                                        &state_guard,
+                                        IpcRequest::UpdateSettings(state_guard.settings.clone()),
+                                    );
+                                    InvalidateRect(hwnd, std::ptr::null(), 0);
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Always On Top button (730..895, 312..348)
+                        if pt_x >= 730 && pt_x <= 895 && pt_y >= 312 && pt_y <= 348 {
+                            let next = !state_guard.settings.always_on_top;
+                            state_guard.settings.always_on_top = next;
+                            send_ipc_async(
+                                &state_guard,
+                                IpcRequest::UpdateSettings(state_guard.settings.clone()),
+                            );
+                            InvalidateRect(hwnd, std::ptr::null(), 0);
+                        }
+
+                        // Privacy Mode button (730..895, 362..398)
+                        if pt_x >= 730 && pt_x <= 895 && pt_y >= 362 && pt_y <= 398 {
+                            let next = !state_guard.privacy_mode;
+                            state_guard.privacy_mode = next;
+                            state_guard.settings.privacy_mode = next;
+                            send_ipc_async(&state_guard, IpcRequest::SetPrivacyMode(next));
                             send_ipc_async(
                                 &state_guard,
                                 IpcRequest::UpdateSettings(state_guard.settings.clone()),
@@ -576,10 +874,13 @@ unsafe extern "system" fn control_center_wndproc(
             0
         }
         WM_TIMER => {
-            // Periodic polling of host state
+            // Animate pet frames and periodically poll host state
             if !state_ptr.is_null() {
                 let mut state_guard = (*state_ptr).lock().unwrap();
-                poll_host_updates(&mut state_guard);
+                state_guard.frame_counter = state_guard.frame_counter.wrapping_add(1);
+                if state_guard.frame_counter % 2 == 0 {
+                    poll_host_updates(&mut state_guard);
+                }
                 InvalidateRect(hwnd, std::ptr::null(), 0);
             }
             0
@@ -605,168 +906,368 @@ unsafe fn render_tab_status(
     hdc: windows_sys::Win32::Graphics::Gdi::HDC,
     state: &ControlCenterState,
     hfont_title: windows_sys::Win32::Graphics::Gdi::HFONT,
+    hfont_subtitle: windows_sys::Win32::Graphics::Gdi::HFONT,
     hfont_bold: windows_sys::Win32::Graphics::Gdi::HFONT,
     hfont_regular: windows_sys::Win32::Graphics::Gdi::HFONT,
-    color_card: u32,
-    color_text: u32,
-    color_subtext: u32,
-    color_accent: u32,
-    color_green: u32,
 ) {
-    use windows_sys::Win32::Foundation::RECT;
-    use windows_sys::Win32::Graphics::Gdi::{
-        CreateSolidBrush, DeleteObject, FillRect, SelectObject, SetTextColor,
-    };
+    use windows_sys::Win32::Graphics::Gdi::{SelectObject, SetTextColor};
 
     SelectObject(hdc, hfont_title);
-    SetTextColor(hdc, color_accent);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
     let title_text = if state.locale == SupportedLocale::TrTr {
-        "Masaüstü Pet Durumu"
+        "🐾  Kedi Durumu & İhtiyaçlar"
     } else {
-        "Desktop Pet Overview"
+        "🐾  Companion Overview & Care"
     };
-    draw_str(hdc, 230, 24, title_text);
+    draw_str(hdc, 248, 20, title_text);
 
-    // Companion Card
-    let card_brush = CreateSolidBrush(color_card);
-    let card_rect = RECT {
-        left: 230,
-        top: 70,
-        right: 740,
-        bottom: 215,
-    };
-    FillRect(hdc, &card_rect, card_brush);
-    DeleteObject(card_brush);
+    // Main Companion Card (x: 248..915, y: 55..235)
+    draw_card(hdc, 248, 55, 915, 235, COLOR_CARD_BG, COLOR_CARD_BORDER);
 
+    // Draw Animated Scaled Cat Sprite inside Card at (262, 65)
+    draw_cat_sprite(hdc, 262, 65, state);
+
+    // Breed Label under sprite
     SelectObject(hdc, hfont_bold);
-    SetTextColor(hdc, color_text);
+    SetTextColor(hdc, COLOR_TEXT_MUTED);
+    let is_tr = state.locale == SupportedLocale::TrTr;
+    let breed_name = state.settings.cat_breed.display_name(is_tr);
+    draw_str(hdc, 280, 200, &format!("🐱 {}", breed_name));
+
+    // Pet Info on Right Side of Card
+    SelectObject(hdc, hfont_subtitle);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
     let pet_name = state
         .active_pet
         .as_ref()
         .map(|p| p.name.as_str())
-        .unwrap_or("Mimi the Cat");
-    draw_str(hdc, 250, 85, pet_name);
+        .unwrap_or("Mimi");
+    draw_str(hdc, 410, 68, pet_name);
 
-    SelectObject(hdc, hfont_regular);
-    SetTextColor(hdc, color_subtext);
-    let author_text = if state.locale == SupportedLocale::TrTr {
-        "Geliştirici: Tiyatrotist  |  Lisans: AGPL-3.0  |  Tür: Kedicik"
+    // Current Behavior Badge
+    let (behavior_desc, _) = get_pet_mood_and_frame(state);
+
+    draw_card(hdc, 480, 68, 680, 92, COLOR_PEACH_LIGHT, COLOR_PEACH_ACCENT);
+    SelectObject(hdc, hfont_bold);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
+    draw_str(hdc, 492, 72, behavior_desc);
+
+    // 5 Live Needs Progress Bars
+    let (hunger, thirst, energy, bond, hygiene) = if let Some(ref st) = state.pet_state {
+        (st.hunger, st.thirst, st.energy, st.mood, st.hygiene)
     } else {
-        "Author: Tiyatrotist  |  License: AGPL-3.0  |  Type: Starter Feline"
-    };
-    draw_str(hdc, 250, 110, author_text);
-
-    // Mood & Energy Bars
-    let (mood, energy) = if let Some(ref st) = state.pet_state {
-        (st.mood, st.energy)
-    } else {
-        (0.85, 0.70)
+        (0.75, 0.85, 0.65, 0.90, 0.80)
     };
 
-    SetTextColor(hdc, color_text);
-    let mood_label = if state.locale == SupportedLocale::TrTr {
-        format!("Mutluluk (Mood)   : {:.0}%", mood * 100.0)
-    } else {
-        format!("Happiness (Mood)  : {:.0}%", mood * 100.0)
-    };
-    draw_str(hdc, 250, 138, &mood_label);
-
-    let energy_label = if state.locale == SupportedLocale::TrTr {
-        format!("Enerji (Energy)   : {:.0}%", energy * 100.0)
-    } else {
-        format!("Energy Level      : {:.0}%", energy * 100.0)
-    };
-    draw_str(hdc, 250, 162, &energy_label);
-
-    let behavior_label = if state.locale == SupportedLocale::TrTr {
-        "Durum: Aktif ve Sağlıklı (Yerel AI Motoru Açık)"
-    } else {
-        "Behavior: Active & Playful (Local Deterministic Engine)"
-    };
-    draw_str(hdc, 250, 186, behavior_label);
-
-    // Interactive Action Buttons
-    let btn_brush = CreateSolidBrush(0x004E3A36);
-
-    let buttons = [
+    let bars = [
         (
-            230,
-            340,
+            104,
+            hunger,
+            COLOR_PEACH_ACCENT,
             if state.locale == SupportedLocale::TrTr {
-                "🐾  Sev"
+                "🐟 Açlık"
             } else {
-                "🐾  Pet"
+                "🐟 Hunger"
             },
         ),
         (
-            355,
-            465,
+            128,
+            thirst,
+            COLOR_SKY_BLUE,
             if state.locale == SupportedLocale::TrTr {
-                "🐟  Besle"
+                "💧 Susuzluk"
             } else {
-                "🐟  Feed"
+                "💧 Thirst"
             },
         ),
         (
-            480,
-            590,
+            152,
+            energy,
+            COLOR_HONEY_GOLD,
             if state.locale == SupportedLocale::TrTr {
-                "🎾  Oyna"
+                "⚡ Enerji"
             } else {
-                "🎾  Play"
+                "⚡ Energy"
+            },
+        ),
+        (
+            176,
+            bond,
+            COLOR_CORAL_PINK,
+            if state.locale == SupportedLocale::TrTr {
+                "❤️ Sevgi / Bağ"
+            } else {
+                "❤️ Affection"
+            },
+        ),
+        (
+            200,
+            hygiene,
+            COLOR_MINT_GREEN,
+            if state.locale == SupportedLocale::TrTr {
+                "✨ Temizlik"
+            } else {
+                "✨ Hygiene"
             },
         ),
     ];
 
-    for (x0, x1, lbl) in buttons {
-        let b_rect = RECT {
-            left: x0,
-            top: 230,
-            right: x1,
-            bottom: 265,
-        };
-        FillRect(hdc, &b_rect, btn_brush);
-        SelectObject(hdc, hfont_bold);
-        SetTextColor(hdc, color_accent);
-        draw_str(hdc, x0 + 15, 238, lbl);
+    for (y, val, color, label) in bars {
+        draw_progress_bar(
+            hdc,
+            530,
+            y + 2,
+            835,
+            y + 14,
+            val,
+            color,
+            label,
+            &format!("{:.0}%", val * 100.0),
+            hfont_regular,
+        );
     }
-    DeleteObject(btn_brush);
 
-    // Status feedback message
+    // Quick Care Buttons at y = 250..290 (5 cute buttons)
+    let care_buttons = [
+        (
+            248,
+            373,
+            if state.locale == SupportedLocale::TrTr {
+                "🐟 Mama Ver"
+            } else {
+                "🐟 Feed"
+            },
+        ),
+        (
+            383,
+            508,
+            if state.locale == SupportedLocale::TrTr {
+                "💧 Su Ver"
+            } else {
+                "💧 Water"
+            },
+        ),
+        (
+            518,
+            643,
+            if state.locale == SupportedLocale::TrTr {
+                "🪮 Tara"
+            } else {
+                "🪮 Groom"
+            },
+        ),
+        (
+            653,
+            778,
+            if state.locale == SupportedLocale::TrTr {
+                "🎾 Oynat"
+            } else {
+                "🎾 Play"
+            },
+        ),
+        (
+            788,
+            913,
+            if state.locale == SupportedLocale::TrTr {
+                "❤️ Sev"
+            } else {
+                "❤️ Pet"
+            },
+        ),
+    ];
+
+    for (x0, x1, lbl) in care_buttons {
+        draw_button(
+            hdc,
+            x0,
+            250,
+            x1,
+            290,
+            lbl,
+            COLOR_CARD_BG,
+            COLOR_PEACH_ACCENT,
+            COLOR_TEXT_COCOA,
+            hfont_bold,
+        );
+    }
+
+    // Feedback message
     if !state.status_feedback.is_empty() {
-        SelectObject(hdc, hfont_regular);
-        SetTextColor(hdc, color_green);
-        draw_str(hdc, 230, 280, &state.status_feedback);
+        SelectObject(hdc, hfont_bold);
+        SetTextColor(hdc, COLOR_DARK_GREEN);
+        draw_str(hdc, 250, 298, &state.status_feedback);
     }
 
+    // Breed Selector Card at y = 325..445
+    draw_card(hdc, 248, 325, 915, 445, COLOR_CARD_BG, COLOR_CARD_BORDER);
+
+    SelectObject(hdc, hfont_bold);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
+    let breed_title = if state.locale == SupportedLocale::TrTr {
+        "🐱 Gerçek Kedi Irkları & Kürk Görünümleri"
+    } else {
+        "🐱 Domestic Feline Breeds & Coat Palettes"
+    };
+    draw_str(hdc, 265, 335, breed_title);
+
+    let breeds = [
+        (265, 345, CatBreed::Tabby, "Tekir"),
+        (353, 438, CatBreed::Tuxedo, "Smokin"),
+        (446, 521, CatBreed::Calico, "Calico"),
+        (529, 614, CatBreed::Ginger, "Sarıman"),
+        (622, 702, CatBreed::Siamese, "Siyam"),
+        (710, 785, CatBreed::Black, "Siyah"),
+        (793, 873, CatBreed::White, "Beyaz"),
+    ];
+
+    for (x0, x1, brd, name) in breeds {
+        let is_selected = state.settings.cat_breed == brd;
+        let bg = if is_selected {
+            COLOR_PEACH_ACCENT
+        } else {
+            COLOR_CARD_BG
+        };
+        let border = if is_selected {
+            COLOR_TEXT_COCOA
+        } else {
+            COLOR_CARD_BORDER
+        };
+        draw_button(
+            hdc,
+            x0,
+            365,
+            x1,
+            400,
+            name,
+            bg,
+            border,
+            COLOR_TEXT_COCOA,
+            hfont_bold,
+        );
+    }
+
+    SelectObject(hdc, hfont_regular);
+    SetTextColor(hdc, COLOR_TEXT_MUTED);
+    let breed_info = match state.settings.cat_breed {
+        CatBreed::Tabby => {
+            if state.locale == SupportedLocale::TrTr {
+                "Klasik sevimli sokak kedisi tekir çizgileri ve yeşil gözler 🐾"
+            } else {
+                "Classic friendly domestic tabby with striped coat & emerald eyes 🐾"
+            }
+        }
+        CatBreed::Tuxedo => {
+            if state.locale == SupportedLocale::TrTr {
+                "Siyah smokin frak ve beyaz göğüs deseni, sarı-yeşil gözler 🎩"
+            } else {
+                "Dapper black tuxedo with white chest and yellow-green eyes 🎩"
+            }
+        }
+        CatBreed::Calico => {
+            if state.locale == SupportedLocale::TrTr {
+                "Üç renkli (beyaz, turuncu, siyah) şans getiren Japon Bobtail deseni 🍀"
+            } else {
+                "Tri-color calico coat traditionally celebrated for good luck 🍀"
+            }
+        }
+        CatBreed::Ginger => {
+            if state.locale == SupportedLocale::TrTr {
+                "Sıcak turuncu tekir çizgileri, obur ve oyuncu sarıman ☀️"
+            } else {
+                "Warm orange mackerel tabby, sweet and playful marmalade cat ☀️"
+            }
+        }
+        CatBreed::Siamese => {
+            if state.locale == SupportedLocale::TrTr {
+                "Açık krem gövde, koyu kahve maske ve derin safir mavi gözler 💎"
+            } else {
+                "Cream body with seal points and deep sapphire blue eyes 💎"
+            }
+        }
+        CatBreed::Black => {
+            if state.locale == SupportedLocale::TrTr {
+                "Parlak ipeksi gece siyahı kürk ve büyüleyici altın sarısı gözler 🌙"
+            } else {
+                "Silky midnight black coat with radiant amber eyes 🌙"
+            }
+        }
+        CatBreed::White => {
+            if state.locale == SupportedLocale::TrTr {
+                "Pamuk gibi bembeyaz kürk ve parıltılı turkuaz gözler ❄️"
+            } else {
+                "Pristine snowy white coat with bright turquoise eyes ❄️"
+            }
+        }
+    };
+    draw_str(hdc, 265, 412, breed_info);
+
+    // Host Status / Launcher Card at y = 460..605
+    draw_card(hdc, 248, 460, 915, 605, COLOR_CARD_BG, COLOR_CARD_BORDER);
     if !state.is_connected {
-        SelectObject(hdc, hfont_regular);
-        SetTextColor(hdc, 0x00A88BF3);
-        let notice = if state.locale == SupportedLocale::TrTr {
-            "OpenPet Host arka planda çalışmıyor. Başlatmak için tıklayın:"
-        } else {
-            "OpenPet Host is not running in background. Click to start:"
-        };
-        draw_str(hdc, 230, 320, notice);
-
-        let start_brush = CreateSolidBrush(color_accent);
-        let start_rect = RECT {
-            left: 230,
-            top: 350,
-            right: 430,
-            bottom: 385,
-        };
-        FillRect(hdc, &start_rect, start_brush);
-        DeleteObject(start_brush);
-
         SelectObject(hdc, hfont_bold);
-        SetTextColor(hdc, 0x001E1E2E);
-        let btn_lbl = if state.locale == SupportedLocale::TrTr {
-            "🚀  Peti Masaüstünde Başlat"
+        SetTextColor(hdc, COLOR_DANGER_RED);
+        let notice_title = if state.locale == SupportedLocale::TrTr {
+            "⚠️ OpenPet Host Arka Planda Çalışmıyor"
         } else {
-            "🚀  Launch Desktop Pet"
+            "⚠️ OpenPet Host is Offline"
         };
-        draw_str(hdc, 240, 358, btn_lbl);
+        draw_str(hdc, 265, 475, notice_title);
+
+        SelectObject(hdc, hfont_regular);
+        SetTextColor(hdc, COLOR_TEXT_MUTED);
+        let notice_body = if state.locale == SupportedLocale::TrTr {
+            "Masaüstünde yüzen kedi penceresini ve yerel IPC servislerini başlatmak için tıklayın:"
+        } else {
+            "Click below to launch the floating companion pet window and local IPC services:"
+        };
+        draw_str(hdc, 265, 502, notice_body);
+
+        draw_button(
+            hdc,
+            265,
+            535,
+            530,
+            575,
+            if state.locale == SupportedLocale::TrTr {
+                "🚀 Masaüstü Petini Başlat"
+            } else {
+                "🚀 Launch Desktop Pet"
+            },
+            COLOR_PEACH_ACCENT,
+            COLOR_CARD_BORDER,
+            COLOR_TEXT_COCOA,
+            hfont_bold,
+        );
+    } else {
+        SelectObject(hdc, hfont_bold);
+        SetTextColor(hdc, COLOR_DARK_GREEN);
+        let active_title = if state.locale == SupportedLocale::TrTr {
+            "✨ Masaüstü Pet Penceresi Aktif ve Bağlı"
+        } else {
+            "✨ Desktop Companion Window is Active & Connected"
+        };
+        draw_str(hdc, 265, 475, active_title);
+
+        SelectObject(hdc, hfont_regular);
+        SetTextColor(hdc, COLOR_TEXT_COCOA);
+        let tip1 = if state.locale == SupportedLocale::TrTr {
+            "• Çift Tıklama: Masaüstündeki pete çift tıklayarak bu Kontrol Merkezini açabilirsiniz."
+        } else {
+            "• Double Click: Double clicking the desktop pet brings up this Control Center."
+        };
+        let tip2 = if state.locale == SupportedLocale::TrTr {
+            "• Konuşma Baloncuğu: Petin başı üzerinde anlık masaüstü tepkileri ve konuşmalar gösterilir."
+        } else {
+            "• Speech Bubble: Instant desktop thoughts and reactions appear in a cozy speech bubble above the pet."
+        };
+        let tip3 = if state.locale == SupportedLocale::TrTr {
+            "• Şeffaf Tıklama Geçirgenliği: Petin çevresindeki boş alanlar fare tıklamalarını arkadaki pencerelere iletir."
+        } else {
+            "• Click-Through Transparency: Empty areas around the cat allow seamless clicking into background windows."
+        };
+        draw_str(hdc, 265, 505, tip1);
+        draw_str(hdc, 265, 532, tip2);
+        draw_str(hdc, 265, 560, tip3);
     }
 }
 
@@ -774,167 +1275,314 @@ unsafe fn render_tab_status(
 unsafe fn render_tab_chat(
     hdc: windows_sys::Win32::Graphics::Gdi::HDC,
     state: &ControlCenterState,
+    hfont_title: windows_sys::Win32::Graphics::Gdi::HFONT,
     hfont_bold: windows_sys::Win32::Graphics::Gdi::HFONT,
     hfont_regular: windows_sys::Win32::Graphics::Gdi::HFONT,
-    color_card: u32,
-    color_text: u32,
-    color_subtext: u32,
-    color_accent: u32,
 ) {
-    use windows_sys::Win32::Foundation::RECT;
-    use windows_sys::Win32::Graphics::Gdi::{
-        CreateSolidBrush, DeleteObject, FillRect, SelectObject, SetTextColor,
-    };
+    use windows_sys::Win32::Graphics::Gdi::{SelectObject, SetTextColor};
 
-    SelectObject(hdc, hfont_bold);
-    SetTextColor(hdc, color_accent);
+    SelectObject(hdc, hfont_title);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
     let title = if state.locale == SupportedLocale::TrTr {
-        "Petinizle Sohbet Edin"
+        "💬  Mimi ile Sohbet"
     } else {
-        "Chat with your Companion"
+        "💬  Chat with Mimi"
     };
-    draw_str(hdc, 230, 24, title);
+    draw_str(hdc, 248, 20, title);
 
-    // Chat History Box
-    let chat_brush = CreateSolidBrush(color_card);
-    let chat_rect = RECT {
-        left: 230,
-        top: 60,
-        right: 750,
-        bottom: 460,
+    // Companion Mood Badge at Top Right
+    draw_card(hdc, 750, 18, 915, 46, COLOR_MINT_GREEN, COLOR_CARD_BORDER);
+    SelectObject(hdc, hfont_bold);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
+    let mood_badge = if state.locale == SupportedLocale::TrTr {
+        "Ruh Hali: Mutlu ✨"
+    } else {
+        "Mood: Happy ✨"
     };
-    FillRect(hdc, &chat_rect, chat_brush);
-    DeleteObject(chat_brush);
+    draw_str(hdc, 765, 23, mood_badge);
+
+    // Chat History Box (x: 248..915, y: 55..465)
+    draw_card(hdc, 248, 55, 915, 465, COLOR_CARD_BG, COLOR_CARD_BORDER);
 
     SelectObject(hdc, hfont_regular);
-    let mut y = 75;
-    for (sender, msg) in state.chat_history.iter().rev().take(12).rev() {
-        if sender == "User" {
-            SetTextColor(hdc, color_accent);
-            draw_str(hdc, 245, y, "You: ");
-        } else {
-            SetTextColor(hdc, 0x00A1E3A6); // Greenish
-            draw_str(hdc, 245, y, "Mimi: ");
-        }
-        SetTextColor(hdc, color_text);
-        draw_str(hdc, 295, y, msg);
-        y += 28;
-    }
-
     if state.chat_history.is_empty() {
-        SetTextColor(hdc, color_subtext);
+        SetTextColor(hdc, COLOR_TEXT_MUTED);
         let empty_msg = if state.locale == SupportedLocale::TrTr {
-            "Henüz mesaj yok. Mimi ile konuşmak için aşağıdan bir şeyler yazın!"
+            "Henüz mesaj yok. Mimi ile konuşmak için aşağıdan bir şeyler yazın veya hızlı butonlara tıklayın!"
         } else {
-            "No messages yet. Type something below to talk with Mimi!"
+            "No messages yet. Type below or click one of the quick chips to chat with Mimi!"
         };
-        draw_str(hdc, 250, 80, empty_msg);
+        draw_str(hdc, 270, 75, empty_msg);
+    } else {
+        let mut y = 70;
+        for (sender, msg) in state.chat_history.iter().rev().take(8).rev() {
+            if sender == "User" {
+                // User chat bubble (right-aligned, warm peach fill)
+                draw_card(
+                    hdc,
+                    450,
+                    y,
+                    895,
+                    y + 40,
+                    COLOR_PEACH_LIGHT,
+                    COLOR_PEACH_ACCENT,
+                );
+                SelectObject(hdc, hfont_bold);
+                SetTextColor(hdc, COLOR_TEXT_COCOA);
+                draw_str(hdc, 465, y + 4, "Sen: ");
+                SelectObject(hdc, hfont_regular);
+                draw_str(hdc, 505, y + 4, msg);
+            } else {
+                // Mimi chat bubble (left-aligned, milk white fill)
+                draw_card(
+                    hdc,
+                    265,
+                    y,
+                    750,
+                    y + 40,
+                    COLOR_BG_CONTENT,
+                    COLOR_CARD_BORDER,
+                );
+                SelectObject(hdc, hfont_bold);
+                SetTextColor(hdc, COLOR_DARK_GREEN);
+                draw_str(hdc, 280, y + 4, "🐾 Mimi: ");
+                SelectObject(hdc, hfont_regular);
+                SetTextColor(hdc, COLOR_TEXT_COCOA);
+                draw_str(hdc, 345, y + 4, msg);
+            }
+            y += 48;
+            if y > 420 {
+                break;
+            }
+        }
     }
 
-    // Send Button Hitbox
-    let send_brush = CreateSolidBrush(color_accent);
-    let send_rect = RECT {
-        left: 675,
-        top: 480,
-        right: 750,
-        bottom: 515,
-    };
-    FillRect(hdc, &send_rect, send_brush);
-    DeleteObject(send_brush);
-
-    SelectObject(hdc, hfont_bold);
-    SetTextColor(hdc, 0x001E1E2E);
-    let send_text = if state.locale == SupportedLocale::TrTr {
-        "Gönder"
+    // Quick Conversational Chips at y = 478..510
+    let chips = if state.locale == SupportedLocale::TrTr {
+        [
+            (248, 365, "Nasılsın? 🐾"),
+            (373, 513, "Seni seviyorum! ❤️"),
+            (521, 666, "Mola verelim mi? ☕"),
+            (674, 804, "Balık ister misin? 🐟"),
+            (812, 915, "Oyun oynayalım! 🧶"),
+        ]
     } else {
-        "Send"
+        [
+            (248, 365, "How are you? 🐾"),
+            (373, 513, "I love you! ❤️"),
+            (521, 666, "Take a break? ☕"),
+            (674, 804, "Want a fish? 🐟"),
+            (812, 915, "Let's play! 🧶"),
+        ]
     };
-    draw_str(hdc, 688, 488, send_text);
+
+    for (x0, x1, text) in chips {
+        draw_button(
+            hdc,
+            x0,
+            478,
+            x1,
+            510,
+            text,
+            COLOR_CARD_BG,
+            COLOR_CARD_BORDER,
+            COLOR_TEXT_COCOA,
+            hfont_bold,
+        );
+    }
+
+    // Send Button at (818..915, 525..563)
+    let send_lbl = if state.locale == SupportedLocale::TrTr {
+        "Gönder 🐾"
+    } else {
+        "Send 🐾"
+    };
+    draw_button(
+        hdc,
+        818,
+        525,
+        915,
+        563,
+        send_lbl,
+        COLOR_PEACH_ACCENT,
+        COLOR_CARD_BORDER,
+        COLOR_TEXT_COCOA,
+        hfont_bold,
+    );
 }
 
 #[cfg(windows)]
 unsafe fn render_tab_reminders(
     hdc: windows_sys::Win32::Graphics::Gdi::HDC,
     state: &ControlCenterState,
+    hfont_title: windows_sys::Win32::Graphics::Gdi::HFONT,
     hfont_bold: windows_sys::Win32::Graphics::Gdi::HFONT,
     hfont_regular: windows_sys::Win32::Graphics::Gdi::HFONT,
-    color_card: u32,
-    color_text: u32,
-    color_subtext: u32,
-    color_accent: u32,
-    color_green: u32,
 ) {
-    use windows_sys::Win32::Foundation::RECT;
-    use windows_sys::Win32::Graphics::Gdi::{
-        CreateSolidBrush, DeleteObject, FillRect, SelectObject, SetTextColor,
-    };
+    use windows_sys::Win32::Graphics::Gdi::{SelectObject, SetTextColor};
 
-    SelectObject(hdc, hfont_bold);
-    SetTextColor(hdc, color_accent);
+    SelectObject(hdc, hfont_title);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
     let title = if state.locale == SupportedLocale::TrTr {
-        "Masaüstü Hatırlatıcıları"
+        "⏰  Masaüstü Hatırlatıcıları"
     } else {
-        "Desktop Reminders"
+        "⏰  Desktop Reminders"
     };
-    draw_str(hdc, 230, 24, title);
-
-    // List box background
-    let list_brush = CreateSolidBrush(color_card);
-    let list_rect = RECT {
-        left: 230,
-        top: 60,
-        right: 750,
-        bottom: 370,
-    };
-    FillRect(hdc, &list_rect, list_brush);
-    DeleteObject(list_brush);
+    draw_str(hdc, 248, 20, title);
 
     SelectObject(hdc, hfont_regular);
-    if state.reminders.is_empty() {
-        SetTextColor(hdc, color_subtext);
-        let empty_str = if state.locale == SupportedLocale::TrTr {
-            "Kayıtlı hatırlatıcı yok. Aşağıdan yeni bir hatırlatıcı ekleyebilirsiniz."
-        } else {
-            "No reminders scheduled. Use the form below to add one."
-        };
-        draw_str(hdc, 250, 80, empty_str);
+    SetTextColor(hdc, COLOR_TEXT_MUTED);
+    let sub = if state.locale == SupportedLocale::TrTr {
+        "Masaüstünde Mimi ile sağlıklı ve odaklı çalışma hatırlatıcıları"
     } else {
-        let mut y = 75;
-        for r in &state.reminders {
-            SetTextColor(hdc, color_accent);
-            draw_str(hdc, 245, y, &format!("📌 {}", r.title));
-            SetTextColor(hdc, color_text);
-            draw_str(hdc, 265, y + 20, &r.body);
-            SetTextColor(hdc, color_subtext);
+        "Gentle reminders from Mimi on your desktop to stay healthy & focused"
+    };
+    draw_str(hdc, 248, 46, sub);
+
+    // Quick Preset Chips at y = 70..102
+    let presets = [
+        (248, 395, "💧 Su İç (30 dk)"),
+        (405, 575, "🧘 Postür Düzelt (45 dk)"),
+        (585, 750, "👀 Göz Dinlendir (20 dk)"),
+        (760, 915, "🚶 Kısa Yürüyüş (60 dk)"),
+    ];
+    for (x0, x1, text) in presets {
+        draw_button(
+            hdc,
+            x0,
+            70,
+            x1,
+            102,
+            text,
+            COLOR_CARD_BG,
+            COLOR_PEACH_ACCENT,
+            COLOR_TEXT_COCOA,
+            hfont_bold,
+        );
+    }
+
+    // Reminders List Box (x: 248..915, y: 112..450)
+    draw_card(hdc, 248, 112, 915, 450, COLOR_CARD_BG, COLOR_CARD_BORDER);
+
+    if state.reminders.is_empty() {
+        SelectObject(hdc, hfont_regular);
+        SetTextColor(hdc, COLOR_TEXT_MUTED);
+        let empty_str = if state.locale == SupportedLocale::TrTr {
+            "Kayıtlı hatırlatıcı yok. Yukarıdaki hızlı butonları veya aşağıdaki formu kullanabilirsiniz."
+        } else {
+            "No reminders scheduled. Use the quick presets above or the form below to add one."
+        };
+        draw_str(hdc, 265, 130, empty_str);
+    } else {
+        let count = state.reminders.len().min(5);
+        for idx in 0..count {
+            let r = &state.reminders[idx];
+            let y = 125 + (idx as i32 * 64);
+
+            // Card background for each reminder
+            draw_card(
+                hdc,
+                260,
+                y,
+                903,
+                y + 56,
+                COLOR_BG_CONTENT,
+                COLOR_CARD_BORDER,
+            );
+
+            SelectObject(hdc, hfont_bold);
+            SetTextColor(hdc, COLOR_TEXT_COCOA);
+            draw_str(hdc, 275, y + 6, &format!("📌 {}", r.title));
+
+            SelectObject(hdc, hfont_regular);
+            SetTextColor(hdc, COLOR_TEXT_COCOA);
+            draw_str(hdc, 275, y + 28, &r.body);
+
+            SelectObject(hdc, hfont_regular);
+            SetTextColor(hdc, COLOR_TEXT_MUTED);
             draw_str(
                 hdc,
-                550,
-                y,
-                &format!("Time: {}", r.schedule.format("%Y-%m-%d %H:%M")),
+                640,
+                y + 6,
+                &format!("⏰ {}", r.schedule.format("%H:%M")),
             );
-            y += 50;
-            if y > 350 {
-                break;
-            }
+
+            // Toggle Button [Aktif ✓] / [Kapalı ⏸]
+            let (toggle_text, toggle_bg, toggle_border, toggle_fg) = if r.enabled {
+                (
+                    if state.locale == SupportedLocale::TrTr {
+                        "Aktif ✓"
+                    } else {
+                        "Active ✓"
+                    },
+                    COLOR_MINT_GREEN,
+                    COLOR_DARK_GREEN,
+                    COLOR_DARK_GREEN,
+                )
+            } else {
+                (
+                    if state.locale == SupportedLocale::TrTr {
+                        "Kapalı ⏸"
+                    } else {
+                        "Off ⏸"
+                    },
+                    COLOR_BG_CONTENT,
+                    COLOR_CARD_BORDER,
+                    COLOR_TEXT_MUTED,
+                )
+            };
+            draw_button(
+                hdc,
+                740,
+                y + 10,
+                825,
+                y + 42,
+                toggle_text,
+                toggle_bg,
+                toggle_border,
+                toggle_fg,
+                hfont_bold,
+            );
+
+            // Delete Button [❌ Sil]
+            let del_text = if state.locale == SupportedLocale::TrTr {
+                "Sil"
+            } else {
+                "Del"
+            };
+            draw_button(
+                hdc,
+                835,
+                y + 10,
+                895,
+                y + 42,
+                del_text,
+                COLOR_DANGER_RED,
+                COLOR_CARD_BORDER,
+                COLOR_BG_CONTENT,
+                hfont_bold,
+            );
         }
     }
 
-    // Add reminder section
+    // Add Custom Reminder Form (x: 248..915, y: 465..605)
+    draw_card(hdc, 248, 465, 915, 605, COLOR_CARD_BG, COLOR_CARD_BORDER);
+
     SelectObject(hdc, hfont_bold);
-    SetTextColor(hdc, color_text);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
     let add_title = if state.locale == SupportedLocale::TrTr {
         "Yeni Hatırlatıcı Ekle:"
     } else {
-        "Add New Reminder:"
+        "Add Custom Reminder:"
     };
-    draw_str(hdc, 230, 390, add_title);
+    draw_str(hdc, 265, 476, add_title);
 
     SelectObject(hdc, hfont_regular);
-    SetTextColor(hdc, color_subtext);
+    SetTextColor(hdc, COLOR_TEXT_MUTED);
     draw_str(
         hdc,
-        230,
-        425,
+        265,
+        508,
         if state.locale == SupportedLocale::TrTr {
             "Başlık:"
         } else {
@@ -943,8 +1591,8 @@ unsafe fn render_tab_reminders(
     );
     draw_str(
         hdc,
-        230,
-        465,
+        265,
+        548,
         if state.locale == SupportedLocale::TrTr {
             "Mesaj:"
         } else {
@@ -953,24 +1601,222 @@ unsafe fn render_tab_reminders(
     );
 
     // Add Button
-    let btn_brush = CreateSolidBrush(color_green);
-    let btn_rect = RECT {
-        left: 630,
-        top: 475,
-        right: 750,
-        bottom: 510,
+    let add_btn_text = if state.locale == SupportedLocale::TrTr {
+        "+ Hatırlatıcı Ekle ⏰"
+    } else {
+        "+ Add Reminder ⏰"
     };
-    FillRect(hdc, &btn_rect, btn_brush);
-    DeleteObject(btn_brush);
+    draw_button(
+        hdc,
+        705,
+        504,
+        898,
+        574,
+        add_btn_text,
+        COLOR_MINT_GREEN,
+        COLOR_CARD_BORDER,
+        COLOR_TEXT_COCOA,
+        hfont_bold,
+    );
+}
+
+#[cfg(windows)]
+fn get_mem_search_query(hwnd_edit: windows_sys::Win32::Foundation::HWND) -> String {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowTextLengthW, GetWindowTextW};
+    unsafe {
+        let len = GetWindowTextLengthW(hwnd_edit);
+        if len > 0 {
+            let mut buf = vec![0u16; len as usize + 1];
+            GetWindowTextW(hwnd_edit, buf.as_mut_ptr(), len + 1);
+            String::from_utf16_lossy(&buf[..len as usize])
+                .trim()
+                .to_lowercase()
+        } else {
+            String::new()
+        }
+    }
+}
+
+#[cfg(windows)]
+unsafe fn render_tab_memories(
+    hdc: windows_sys::Win32::Graphics::Gdi::HDC,
+    state: &ControlCenterState,
+    hfont_title: windows_sys::Win32::Graphics::Gdi::HFONT,
+    hfont_bold: windows_sys::Win32::Graphics::Gdi::HFONT,
+    hfont_regular: windows_sys::Win32::Graphics::Gdi::HFONT,
+) {
+    use windows_sys::Win32::Graphics::Gdi::{SelectObject, SetTextColor};
+
+    SelectObject(hdc, hfont_title);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
+    let title = if state.locale == SupportedLocale::TrTr {
+        "🧠  Kedi Hatıraları & Bellek"
+    } else {
+        "🧠  Companion Memories & Facts"
+    };
+    draw_str(hdc, 248, 20, title);
+
+    SelectObject(hdc, hfont_regular);
+    SetTextColor(hdc, COLOR_TEXT_MUTED);
+    let sub = if state.locale == SupportedLocale::TrTr {
+        "Mimi'nin senin hakkında öğrendiği kalıcı hatıralar (Tamamen yerel SQLite, şeffaf ve denetlenebilir)"
+    } else {
+        "Auditable facts learned about you (100% local SQLite, transparent & under your control)"
+    };
+    draw_str(hdc, 248, 46, sub);
+
+    // Search bar header card (x: 248..915, y: 68..104)
+    draw_card(hdc, 248, 68, 915, 104, COLOR_CARD_BG, COLOR_CARD_BORDER);
 
     SelectObject(hdc, hfont_bold);
-    SetTextColor(hdc, 0x001E1E2E);
-    let add_btn_text = if state.locale == SupportedLocale::TrTr {
-        "+ Ekle"
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
+    let search_lbl = if state.locale == SupportedLocale::TrTr {
+        "🔍  Ara:"
     } else {
-        "+ Add"
+        "🔍  Search:"
     };
-    draw_str(hdc, 665, 483, add_btn_text);
+    draw_str(hdc, 265, 76, search_lbl);
+
+    // Clear / All Buttons
+    let clear_text = if state.locale == SupportedLocale::TrTr {
+        "Temizle"
+    } else {
+        "Clear"
+    };
+    draw_button(
+        hdc,
+        740,
+        72,
+        820,
+        100,
+        clear_text,
+        COLOR_BG_CONTENT,
+        COLOR_CARD_BORDER,
+        COLOR_TEXT_COCOA,
+        hfont_regular,
+    );
+
+    let all_text = if state.locale == SupportedLocale::TrTr {
+        "Tümü"
+    } else {
+        "All"
+    };
+    draw_button(
+        hdc,
+        828,
+        72,
+        895,
+        100,
+        all_text,
+        COLOR_PEACH_LIGHT,
+        COLOR_PEACH_ACCENT,
+        COLOR_TEXT_COCOA,
+        hfont_bold,
+    );
+
+    // Memories List Container (x: 248..915, y: 112..510)
+    draw_card(hdc, 248, 112, 915, 510, COLOR_CARD_BG, COLOR_CARD_BORDER);
+
+    let query = get_mem_search_query(state.hwnd_mem_search);
+    let filtered_memories: Vec<&MemoryFact> = state
+        .memories
+        .iter()
+        .filter(|m| {
+            if query.is_empty() {
+                true
+            } else {
+                m.subject.to_lowercase().contains(&query)
+                    || m.predicate.to_lowercase().contains(&query)
+                    || m.object.to_lowercase().contains(&query)
+            }
+        })
+        .collect();
+
+    if filtered_memories.is_empty() {
+        SelectObject(hdc, hfont_regular);
+        SetTextColor(hdc, COLOR_TEXT_MUTED);
+        let empty_msg = if state.memories.is_empty() {
+            if state.locale == SupportedLocale::TrTr {
+                "Henüz kayıtlı hatıra yok. Sohbet ekranında 'Bunu hatırla: Kahvemi şekersiz içerim' diyerek Mimi'ye not aldırabilirsiniz."
+            } else {
+                "No memories stored yet. You can tell Mimi in chat: 'Remember that I drink coffee with no sugar'!"
+            }
+        } else if state.locale == SupportedLocale::TrTr {
+            "Aramanızla eşleşen hatıra bulunamadı."
+        } else {
+            "No memories match your search filter."
+        };
+        draw_str(hdc, 265, 125, empty_msg);
+    } else {
+        let count = filtered_memories.len().min(5);
+        for (idx, m) in filtered_memories.iter().take(count).enumerate() {
+            let y = 122 + (idx as i32 * 68);
+
+            draw_card(
+                hdc,
+                260,
+                y,
+                903,
+                y + 60,
+                COLOR_BG_CONTENT,
+                COLOR_CARD_BORDER,
+            );
+
+            // Tags
+            SelectObject(hdc, hfont_bold);
+            SetTextColor(hdc, COLOR_DARK_GREEN);
+            draw_str(hdc, 275, y + 6, &format!("[{}] {}", m.predicate, m.subject));
+
+            SelectObject(hdc, hfont_regular);
+            SetTextColor(hdc, COLOR_TEXT_COCOA);
+            draw_str(hdc, 275, y + 32, &format!("\"{}\"", m.object));
+
+            // Confidence Badge
+            SelectObject(hdc, hfont_regular);
+            SetTextColor(hdc, COLOR_TEXT_MUTED);
+            let conf_str = format!("Güven: {:.0}%", m.confidence * 100.0);
+            draw_str(hdc, 710, y + 16, &conf_str);
+
+            // Delete Button [❌ Unut]
+            let forget_btn = if state.locale == SupportedLocale::TrTr {
+                "Unut"
+            } else {
+                "Forget"
+            };
+            draw_button(
+                hdc,
+                825,
+                y + 12,
+                895,
+                y + 48,
+                forget_btn,
+                COLOR_DANGER_RED,
+                COLOR_CARD_BORDER,
+                COLOR_BG_CONTENT,
+                hfont_bold,
+            );
+        }
+    }
+
+    // Local Privacy Safeguard Card (x: 248..915, y: 520..605)
+    draw_card(hdc, 248, 520, 915, 605, COLOR_CARD_BG, COLOR_CARD_BORDER);
+    SelectObject(hdc, hfont_bold);
+    SetTextColor(hdc, COLOR_DARK_GREEN);
+    draw_str(
+        hdc,
+        265,
+        532,
+        "🛡️  Yerel-Öncelikli Bellek & Tam Denetim Güvencesi",
+    );
+
+    SelectObject(hdc, hfont_regular);
+    SetTextColor(hdc, COLOR_TEXT_MUTED);
+    let guard_text = if state.locale == SupportedLocale::TrTr {
+        "Hatıralar yalnızca bilgisayarınızdaki yerel veritabanında saklanır. Hiçbir zaman uzaktaki bir sunucuya aktarılmaz. İstediğiniz hatırayı silebilirsiniz."
+    } else {
+        "Memories are stored strictly on your local SQLite database and never uploaded to remote servers. You can forget any fact at any time."
+    };
+    draw_str(hdc, 265, 558, guard_text);
 }
 
 #[cfg(windows)]
@@ -980,102 +1826,129 @@ unsafe fn render_tab_privacy(
     hfont_title: windows_sys::Win32::Graphics::Gdi::HFONT,
     hfont_bold: windows_sys::Win32::Graphics::Gdi::HFONT,
     hfont_regular: windows_sys::Win32::Graphics::Gdi::HFONT,
-    color_card: u32,
-    color_text: u32,
-    color_subtext: u32,
-    color_accent: u32,
-    color_green: u32,
 ) {
-    use windows_sys::Win32::Foundation::RECT;
-    use windows_sys::Win32::Graphics::Gdi::{
-        CreateSolidBrush, DeleteObject, FillRect, SelectObject, SetTextColor,
-    };
+    use windows_sys::Win32::Graphics::Gdi::{SelectObject, SetTextColor};
 
     SelectObject(hdc, hfont_title);
-    SetTextColor(hdc, color_accent);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
     let title = if state.locale == SupportedLocale::TrTr {
-        "Gizlilik ve Güvenlik Güvencesi"
+        "🛡️  Gizlilik ve Güvenlik Güvencesi"
     } else {
-        "Privacy & Security Safeguards"
+        "🛡️  Privacy & Security Safeguards"
     };
-    draw_str(hdc, 230, 24, title);
-
-    // Privacy Card
-    let card_brush = CreateSolidBrush(color_card);
-    let card_rect = RECT {
-        left: 230,
-        top: 70,
-        right: 740,
-        bottom: 200,
-    };
-    FillRect(hdc, &card_rect, card_brush);
-    DeleteObject(card_brush);
-
-    SelectObject(hdc, hfont_bold);
-    SetTextColor(hdc, color_text);
-    let card_header = if state.locale == SupportedLocale::TrTr {
-        "🛡️  Yerel-Öncelikli (Local-First) ve Sıfır-Telemetri Mimarisi"
-    } else {
-        "🛡️  Local-First Architecture & Zero-Telemetry Guarantee"
-    };
-    draw_str(hdc, 250, 85, card_header);
+    draw_str(hdc, 248, 20, title);
 
     SelectObject(hdc, hfont_regular);
-    SetTextColor(hdc, color_subtext);
-    let info_1 = if state.locale == SupportedLocale::TrTr {
-        "• Verileriniz asla uzaktaki bir sunucuya gönderilmez."
+    SetTextColor(hdc, COLOR_TEXT_MUTED);
+    let sub = if state.locale == SupportedLocale::TrTr {
+        "Sıfır-Telemetri, Yerel-Öncelikli (Local-First) ve Şeffaf Açık Kaynak Güvencesi"
     } else {
-        "• Your personal data never leaves your computer."
+        "Zero-Telemetry, Local-First Architecture & Auditable Open Source"
     };
-    let info_2 = if state.locale == SupportedLocale::TrTr {
-        "• Ekran analizi varsayılan olarak kesinlikle KAPALIDIR."
-    } else {
-        "• Desktop screen analysis is strictly disabled by default."
-    };
-    let info_3 = if state.locale == SupportedLocale::TrTr {
-        "• Gizlilik Modu aktifken tüm görsel algılama kancaları anında durdurulur."
-    } else {
-        "• Privacy Mode instantly severs any screen capture/OCR hooks."
-    };
-    draw_str(hdc, 250, 115, info_1);
-    draw_str(hdc, 250, 140, info_2);
-    draw_str(hdc, 250, 165, info_3);
+    draw_str(hdc, 248, 46, sub);
 
-    // Privacy Mode Toggle Button
-    let btn_color = if state.privacy_mode {
-        color_green
-    } else {
-        0x00443231 // Inactive card color
-    };
-    let toggle_brush = CreateSolidBrush(btn_color);
-    let toggle_rect = RECT {
-        left: 230,
-        top: 220,
-        right: 520,
-        bottom: 265,
-    };
-    FillRect(hdc, &toggle_rect, toggle_brush);
-    DeleteObject(toggle_brush);
+    // Safeguards Card (x: 248..915, y: 75..320)
+    draw_card(hdc, 248, 75, 915, 320, COLOR_CARD_BG, COLOR_CARD_BORDER);
 
     SelectObject(hdc, hfont_bold);
-    let text_color = if state.privacy_mode {
-        0x001E1E2E
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
+    let card_header = if state.locale == SupportedLocale::TrTr {
+        "🛡️  Kullanıcı Gizliliği ve Güvenlik Standartları"
     } else {
-        color_accent
+        "🛡️  User Privacy and Security Commitments"
     };
-    SetTextColor(hdc, text_color);
-    let toggle_text = if state.privacy_mode {
-        if state.locale == SupportedLocale::TrTr {
-            "✓ GİZLİLİK MODU AKTİF (KORUMALI)"
-        } else {
-            "✓ PRIVACY MODE ACTIVE (GUARDED)"
-        }
-    } else if state.locale == SupportedLocale::TrTr {
-        "🛡️ Gizlilik Modunu Aç (Tıkla)"
+    draw_str(hdc, 265, 90, card_header);
+
+    SelectObject(hdc, hfont_regular);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
+    let info_1 = if state.locale == SupportedLocale::TrTr {
+        "• Yerel-Öncelikli Mimari: Tüm verileriniz (sohbet, hatırlatıcılar, hafıza) yalnızca yerel SQLite veritabanında saklanır."
     } else {
-        "🛡️ Enable Privacy Mode (Click)"
+        "• Local-First Architecture: All data (chat, reminders, memories) resides strictly on your local SQLite database."
     };
-    draw_str(hdc, 245, 232, toggle_text);
+    let info_2 = if state.locale == SupportedLocale::TrTr {
+        "• Sıfır Telemetri: Uygulamada hiçbir izleme, telemetri veya harici analitik kütüphanesi bulunmaz."
+    } else {
+        "• Zero-Telemetry Guarantee: Absolutely zero tracking, analytics, or background call-homes exist in the codebase."
+    };
+    let info_3 = if state.locale == SupportedLocale::TrTr {
+        "• Ekran Analizi Varsayılan Olarak KAPALIDIR: Kullanıcı açıkça izin vermedikçe hiçbir ekran yakalama veya OCR çalışmaz."
+    } else {
+        "• Screen Analysis Disabled by Default: No screen grabbing or OCR ever runs without explicit manual opt-in."
+    };
+    let info_4 = if state.locale == SupportedLocale::TrTr {
+        "• Gizlilik Modu Koruması: Gizlilik Modu devredeyken tüm görsel algılama bileşenleri anında devreden çıkarılır."
+    } else {
+        "• Privacy Mode Guard: Enabling Privacy Mode immediately severs all visual inspection hooks."
+    };
+    draw_str(hdc, 265, 125, info_1);
+    draw_str(hdc, 265, 160, info_2);
+    draw_str(hdc, 265, 195, info_3);
+    draw_str(hdc, 265, 230, info_4);
+
+    // Privacy Mode Toggle Button at (248..680, 340..405)
+    let (btn_bg, btn_border, toggle_text) = if state.privacy_mode {
+        (
+            COLOR_MINT_GREEN,
+            COLOR_DARK_GREEN,
+            if state.locale == SupportedLocale::TrTr {
+                "✓ GİZLİLİK MODU AKTİF (KORUMALI) 🛡️"
+            } else {
+                "✓ PRIVACY MODE ACTIVE (GUARDED) 🛡️"
+            },
+        )
+    } else {
+        (
+            COLOR_PEACH_LIGHT,
+            COLOR_PEACH_ACCENT,
+            if state.locale == SupportedLocale::TrTr {
+                "🛡️ Gizlilik Modunu Açmak İçin Tıklayın"
+            } else {
+                "🛡️ Click to Enable Privacy Mode"
+            },
+        )
+    };
+
+    draw_button(
+        hdc,
+        248,
+        340,
+        680,
+        405,
+        toggle_text,
+        btn_bg,
+        btn_border,
+        COLOR_TEXT_COCOA,
+        hfont_bold,
+    );
+
+    // Architecture Info Card (x: 248..915, y: 425..605)
+    draw_card(hdc, 248, 425, 915, 605, COLOR_CARD_BG, COLOR_CARD_BORDER);
+
+    SelectObject(hdc, hfont_bold);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
+    draw_str(hdc, 265, 440, "🔒  Açık Kaynak Mühendislik Standartları");
+
+    SelectObject(hdc, hfont_regular);
+    SetTextColor(hdc, COLOR_TEXT_MUTED);
+    let arch_1 = if state.locale == SupportedLocale::TrTr {
+        "• Süreç İzolasyonu: IPC Named Pipe (openpet-host-pipe) üzerinden en az yetki prensibiyle iletişim kurulur."
+    } else {
+        "• Process Isolation: Communication occurs via strictly scoped local named pipes with least privilege."
+    };
+    let arch_2 = if state.locale == SupportedLocale::TrTr {
+        "• Veri Denetlenebilirliği: Bellekteki veya diskteki tüm veriler SQLite üzerinden doğrudan okunabilir ve silinebilir."
+    } else {
+        "• Transparent Auditability: Every fact, reminder, and setting is stored in plain SQLite files you own."
+    };
+    let arch_3 = if state.locale == SupportedLocale::TrTr {
+        "• Lisans & Bağımsızlık: AGPL-3.0 lisanslıdır, kaynak kodları şeffaf bir biçimde GitHub üzerinde mevcuttur."
+    } else {
+        "• AGPL-3.0 Open-Source: Fully inspectable and verifiable by the community, maintained by Tiyatrotist."
+    };
+    draw_str(hdc, 265, 475, arch_1);
+    draw_str(hdc, 265, 510, arch_2);
+    draw_str(hdc, 265, 545, arch_3);
 }
 
 #[cfg(windows)]
@@ -1085,93 +1958,283 @@ unsafe fn render_tab_settings(
     hfont_title: windows_sys::Win32::Graphics::Gdi::HFONT,
     hfont_bold: windows_sys::Win32::Graphics::Gdi::HFONT,
     hfont_regular: windows_sys::Win32::Graphics::Gdi::HFONT,
-    color_card: u32,
-    color_text: u32,
-    color_subtext: u32,
-    color_accent: u32,
 ) {
-    use windows_sys::Win32::Foundation::RECT;
-    use windows_sys::Win32::Graphics::Gdi::{
-        CreateSolidBrush, DeleteObject, FillRect, SelectObject, SetTextColor,
-    };
+    use windows_sys::Win32::Graphics::Gdi::{SelectObject, SetTextColor};
 
     SelectObject(hdc, hfont_title);
-    SetTextColor(hdc, color_accent);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
     let title = if state.locale == SupportedLocale::TrTr {
-        "Uygulama Ayarları"
+        "⚙️  Uygulama Ayarları"
     } else {
-        "Application Settings"
+        "⚙️  Application Settings"
     };
-    draw_str(hdc, 230, 24, title);
+    draw_str(hdc, 248, 20, title);
 
+    SelectObject(hdc, hfont_regular);
+    SetTextColor(hdc, COLOR_TEXT_MUTED);
+    let sub = if state.locale == SupportedLocale::TrTr {
+        "Arayüz dili, kedi görünümü ve masaüstü tercihleri"
+    } else {
+        "Interface language, companion appearance, and desktop preferences"
+    };
+    draw_str(hdc, 248, 46, sub);
+
+    // Section 1: Dil Seçimi / Interface Language
     SelectObject(hdc, hfont_bold);
-    SetTextColor(hdc, color_text);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
     let lang_header = if state.locale == SupportedLocale::TrTr {
         "Arayüz Dili / Interface Language:"
     } else {
         "Interface Language:"
     };
-    draw_str(hdc, 230, 75, lang_header);
+    draw_str(hdc, 248, 75, lang_header);
 
-    // Language buttons: English / Türkçe
-    let en_active = state.locale == SupportedLocale::EnUs;
-    let brush_en = CreateSolidBrush(if en_active { color_accent } else { color_card });
-    let rect_en = RECT {
-        left: 230,
-        top: 105,
-        right: 345,
-        bottom: 140,
-    };
-    FillRect(hdc, &rect_en, brush_en);
-    DeleteObject(brush_en);
-
-    SelectObject(hdc, hfont_bold);
-    SetTextColor(hdc, if en_active { 0x001E1E2E } else { color_text });
-    draw_str(hdc, 245, 114, "English");
-
+    // Language Buttons
     let tr_active = state.locale == SupportedLocale::TrTr;
-    let brush_tr = CreateSolidBrush(if tr_active { color_accent } else { color_card });
-    let rect_tr = RECT {
-        left: 360,
-        top: 105,
-        right: 475,
-        bottom: 140,
+    let bg_tr = if tr_active {
+        COLOR_PEACH_ACCENT
+    } else {
+        COLOR_CARD_BG
     };
-    FillRect(hdc, &rect_tr, brush_tr);
-    DeleteObject(brush_tr);
+    let border_tr = if tr_active {
+        COLOR_TEXT_COCOA
+    } else {
+        COLOR_CARD_BORDER
+    };
+    draw_button(
+        hdc,
+        248,
+        105,
+        410,
+        150,
+        "🇹🇷  Türkçe",
+        bg_tr,
+        border_tr,
+        COLOR_TEXT_COCOA,
+        hfont_bold,
+    );
 
-    SetTextColor(hdc, if tr_active { 0x001E1E2E } else { color_text });
-    draw_str(hdc, 380, 114, "Türkçe");
+    let en_active = state.locale == SupportedLocale::EnUs;
+    let bg_en = if en_active {
+        COLOR_PEACH_ACCENT
+    } else {
+        COLOR_CARD_BG
+    };
+    let border_en = if en_active {
+        COLOR_TEXT_COCOA
+    } else {
+        COLOR_CARD_BORDER
+    };
+    draw_button(
+        hdc,
+        425,
+        105,
+        585,
+        150,
+        "🇬🇧  English",
+        bg_en,
+        border_en,
+        COLOR_TEXT_COCOA,
+        hfont_bold,
+    );
 
-    // Other settings info
+    // Section 2: Kedi Cinsi / Companion Breed
     SelectObject(hdc, hfont_bold);
-    SetTextColor(hdc, color_text);
-    draw_str(hdc, 230, 175, "Rendering & Accessibility:");
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
+    let breed_header = if state.locale == SupportedLocale::TrTr {
+        "Aktif Kedi Cinsi / Companion Breed:"
+    } else {
+        "Active Companion Breed:"
+    };
+    draw_str(hdc, 248, 175, breed_header);
+
+    let breeds = [
+        (248, 328, CatBreed::Tabby, "Tekir"),
+        (336, 421, CatBreed::Tuxedo, "Smokin"),
+        (429, 504, CatBreed::Calico, "Calico"),
+        (512, 597, CatBreed::Ginger, "Sarıman"),
+        (605, 685, CatBreed::Siamese, "Siyam"),
+        (693, 768, CatBreed::Black, "Siyah"),
+        (776, 856, CatBreed::White, "Beyaz"),
+    ];
+
+    for (x0, x1, brd, name) in breeds {
+        let is_selected = state.settings.cat_breed == brd;
+        let bg = if is_selected {
+            COLOR_PEACH_ACCENT
+        } else {
+            COLOR_CARD_BG
+        };
+        let border = if is_selected {
+            COLOR_TEXT_COCOA
+        } else {
+            COLOR_CARD_BORDER
+        };
+        draw_button(
+            hdc,
+            x0,
+            205,
+            x1,
+            245,
+            name,
+            bg,
+            border,
+            COLOR_TEXT_COCOA,
+            hfont_bold,
+        );
+    }
+
+    // Section 3: Masaüstü & Performans Tercihleri
+    draw_card(hdc, 248, 270, 915, 480, COLOR_CARD_BG, COLOR_CARD_BORDER);
+
+    SelectObject(hdc, hfont_bold);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
+    let title_pref = if state.locale == SupportedLocale::TrTr {
+        "🖥️  Masaüstü Tercihleri & Güvenlik"
+    } else {
+        "🖥️  Desktop Preferences & Security"
+    };
+    draw_str(hdc, 265, 285, title_pref);
+
+    // 1. Always On Top
+    SelectObject(hdc, hfont_bold);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
+    let aot_label = if state.locale == SupportedLocale::TrTr {
+        "Her Zaman Üstte (Always On Top):"
+    } else {
+        "Always On Top:"
+    };
+    draw_str(hdc, 265, 315, aot_label);
 
     SelectObject(hdc, hfont_regular);
-    SetTextColor(hdc, color_subtext);
-    let opt1 = if state.locale == SupportedLocale::TrTr {
-        "• Animasyon Kalitesi: Yüksek (60 FPS Doğal Hızlanma)"
+    SetTextColor(hdc, COLOR_TEXT_MUTED);
+    let aot_sub = if state.locale == SupportedLocale::TrTr {
+        "Pet penceresi diğer pencerelerin üzerinde görünür"
     } else {
-        "• Animation Quality: High (60 FPS Dynamic Acceleration)"
+        "Pet floats above active desktop windows"
     };
-    let opt2 = if state.locale == SupportedLocale::TrTr {
-        "• Her Zaman Üstte: Açık (Windows 11 Masaüstü Üzerinde Yüzme)"
+    draw_str(hdc, 265, 335, aot_sub);
+
+    let (aot_btn_text, aot_bg, aot_border, aot_fg) = if state.settings.always_on_top {
+        (
+            if state.locale == SupportedLocale::TrTr {
+                "Açık (Üstte) ✓"
+            } else {
+                "ON (Top) ✓"
+            },
+            COLOR_MINT_GREEN,
+            COLOR_DARK_GREEN,
+            COLOR_DARK_GREEN,
+        )
     } else {
-        "• Always On Top: Enabled (Floating on Windows 11 Desktop)"
+        (
+            if state.locale == SupportedLocale::TrTr {
+                "Kapalı ✕"
+            } else {
+                "OFF ✕"
+            },
+            COLOR_BG_CONTENT,
+            COLOR_CARD_BORDER,
+            COLOR_TEXT_MUTED,
+        )
     };
-    let opt3 = if state.locale == SupportedLocale::TrTr {
-        "• Lisans ve Kod: AGPL-3.0 Açık Kaynak - Tiyatrotist"
+    draw_button(
+        hdc,
+        730,
+        312,
+        895,
+        348,
+        aot_btn_text,
+        aot_bg,
+        aot_border,
+        aot_fg,
+        hfont_bold,
+    );
+
+    // 2. Privacy Mode
+    SelectObject(hdc, hfont_bold);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
+    let priv_label = if state.locale == SupportedLocale::TrTr {
+        "Gizlilik Modu (Privacy Mode):"
     } else {
-        "• License & Core: AGPL-3.0 Open-Source by Tiyatrotist"
+        "Privacy Mode:"
     };
-    draw_str(hdc, 230, 205, opt1);
-    draw_str(hdc, 230, 230, opt2);
-    draw_str(hdc, 230, 255, opt3);
+    draw_str(hdc, 265, 365, priv_label);
+
+    SelectObject(hdc, hfont_regular);
+    SetTextColor(hdc, COLOR_TEXT_MUTED);
+    let priv_sub = if state.locale == SupportedLocale::TrTr {
+        "Görsel algılama ve ekran kancalarını anında durdurur"
+    } else {
+        "Halts screen capture and inspection hooks"
+    };
+    draw_str(hdc, 265, 385, priv_sub);
+
+    let (priv_btn_text, priv_bg, priv_border, priv_fg) = if state.privacy_mode {
+        (
+            if state.locale == SupportedLocale::TrTr {
+                "Aktif 🛡️"
+            } else {
+                "Active 🛡️"
+            },
+            COLOR_MINT_GREEN,
+            COLOR_DARK_GREEN,
+            COLOR_DARK_GREEN,
+        )
+    } else {
+        (
+            if state.locale == SupportedLocale::TrTr {
+                "Kapalı ✕"
+            } else {
+                "Disabled ✕"
+            },
+            COLOR_BG_CONTENT,
+            COLOR_CARD_BORDER,
+            COLOR_TEXT_MUTED,
+        )
+    };
+    draw_button(
+        hdc,
+        730,
+        362,
+        895,
+        398,
+        priv_btn_text,
+        priv_bg,
+        priv_border,
+        priv_fg,
+        hfont_bold,
+    );
+
+    // Info lines
+    SelectObject(hdc, hfont_regular);
+    SetTextColor(hdc, COLOR_TEXT_MUTED);
+    let anim_info = if state.locale == SupportedLocale::TrTr {
+        "• Animasyon Kalitesi: 60 FPS Dinamik Hızlanma, Hafif ve Akıcı GDI İşleme."
+    } else {
+        "• Animation Engine: 60 FPS dynamic frame scheduling, lightweight GDI."
+    };
+    let author_info = if state.locale == SupportedLocale::TrTr {
+        "• Lisans ve Geliştirici: Tiyatrotist • AGPL-3.0 Açık Kaynak."
+    } else {
+        "• Author & License: Tiyatrotist • AGPL-3.0 Open-Source."
+    };
+    draw_str(hdc, 265, 418, anim_info);
+    draw_str(hdc, 265, 442, author_info);
+
+    // Save Feedback Text
+    SelectObject(hdc, hfont_regular);
+    SetTextColor(hdc, COLOR_DARK_GREEN);
+    let save_note = if state.locale == SupportedLocale::TrTr {
+        "✓ Değişiklikler anında yerel SQLite veritabanına kaydedilir."
+    } else {
+        "✓ Settings are automatically persisted to local SQLite storage."
+    };
+    draw_str(hdc, 248, 500, save_note);
 }
 
 // ---------------------------------------------------------------------------
-// Helper Methods
+// Helper Methods & Win32 Drawing
 // ---------------------------------------------------------------------------
 
 #[cfg(windows)]
@@ -1192,6 +2255,267 @@ fn draw_str(hdc: windows_sys::Win32::Graphics::Gdi::HDC, x: i32, y: i32, text: &
 }
 
 #[cfg(windows)]
+unsafe fn draw_card(
+    hdc: windows_sys::Win32::Graphics::Gdi::HDC,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    bg_color: u32,
+    border_color: u32,
+) {
+    use windows_sys::Win32::Graphics::Gdi::{
+        CreatePen, CreateSolidBrush, DeleteObject, RoundRect, SelectObject, PS_SOLID,
+    };
+    let pen = CreatePen(PS_SOLID, 1, border_color);
+    let brush = CreateSolidBrush(bg_color);
+    let old_p = SelectObject(hdc, pen);
+    let old_b = SelectObject(hdc, brush);
+
+    RoundRect(hdc, left, top, right, bottom, 12, 12);
+
+    SelectObject(hdc, old_p);
+    SelectObject(hdc, old_b);
+    DeleteObject(pen);
+    DeleteObject(brush);
+}
+
+#[cfg(windows)]
+unsafe fn draw_button(
+    hdc: windows_sys::Win32::Graphics::Gdi::HDC,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    text: &str,
+    bg_color: u32,
+    border_color: u32,
+    text_color: u32,
+    hfont: windows_sys::Win32::Graphics::Gdi::HFONT,
+) {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        DrawTextW, SelectObject, SetTextColor, DT_CENTER, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER,
+    };
+
+    draw_card(hdc, left, top, right, bottom, bg_color, border_color);
+
+    let old_f = SelectObject(hdc, hfont);
+    SetTextColor(hdc, text_color);
+    let wide: Vec<u16> = OsStr::new(text)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut rect = RECT {
+        left,
+        top,
+        right,
+        bottom,
+    };
+    DrawTextW(
+        hdc,
+        wide.as_ptr(),
+        -1,
+        &mut rect,
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+    );
+    SelectObject(hdc, old_f);
+}
+
+#[cfg(windows)]
+unsafe fn draw_progress_bar(
+    hdc: windows_sys::Win32::Graphics::Gdi::HDC,
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    ratio: f32,
+    fill_color: u32,
+    label: &str,
+    pct_str: &str,
+    hfont: windows_sys::Win32::Graphics::Gdi::HFONT,
+) {
+    use windows_sys::Win32::Graphics::Gdi::{
+        CreatePen, CreateSolidBrush, DeleteObject, RoundRect, SelectObject, SetTextColor, PS_SOLID,
+    };
+
+    // Label on left
+    let old_f = SelectObject(hdc, hfont);
+    SetTextColor(hdc, COLOR_TEXT_COCOA);
+    draw_str(hdc, left - 110, top - 2, label);
+
+    // Track
+    let pen = CreatePen(PS_SOLID, 1, COLOR_CARD_BORDER);
+    let track_brush = CreateSolidBrush(COLOR_PROGRESS_TRACK);
+    let old_p = SelectObject(hdc, pen);
+    let old_b = SelectObject(hdc, track_brush);
+    RoundRect(hdc, left, top, right, bottom, 8, 8);
+
+    // Fill
+    let fill_w = ((right - left) as f32 * ratio.clamp(0.0, 1.0)) as i32;
+    if fill_w > 4 {
+        let fill_brush = CreateSolidBrush(fill_color);
+        SelectObject(hdc, fill_brush);
+        RoundRect(hdc, left, top, left + fill_w, bottom, 8, 8);
+        DeleteObject(fill_brush);
+    }
+
+    SelectObject(hdc, old_p);
+    SelectObject(hdc, old_b);
+    DeleteObject(pen);
+    DeleteObject(track_brush);
+
+    // Percentage on right
+    draw_str(hdc, right + 12, top - 2, pct_str);
+    SelectObject(hdc, old_f);
+}
+
+fn get_pet_mood_and_frame(state: &ControlCenterState) -> (&'static str, &'static str) {
+    let is_tr = state.locale == SupportedLocale::TrTr;
+    let tick = state.frame_counter;
+    if let Some(ref st) = state.pet_state {
+        if st.sleepiness > 0.85 {
+            (
+                if is_tr {
+                    "💤 Uyuyor (Sleeping)"
+                } else {
+                    "💤 Sleeping"
+                },
+                if tick % 2 == 0 { "sleep_0" } else { "sleep_1" },
+            )
+        } else if st.mood > 0.85 {
+            (
+                if is_tr {
+                    "🐱 Mırıldanıyor (Purring)"
+                } else {
+                    "🐱 Purring"
+                },
+                if tick % 2 == 0 { "purr_0" } else { "purr_1" },
+            )
+        } else if st.boredom > 0.80 {
+            (
+                if is_tr {
+                    "⚡ Koşturuyor (Zoomies)"
+                } else {
+                    "⚡ Zoomies!"
+                },
+                if tick % 2 == 0 {
+                    "zoomies_0"
+                } else {
+                    "zoomies_1"
+                },
+            )
+        } else if st.energy < 0.25 {
+            (
+                if is_tr {
+                    "🍞 Ekmek Pozu (Loaf)"
+                } else {
+                    "🍞 Loaf"
+                },
+                "loaf_0",
+            )
+        } else if st.bond > 0.80 {
+            (
+                if is_tr {
+                    "🐾 Hamur Yoğuruyor (Kneading)"
+                } else {
+                    "🐾 Kneading"
+                },
+                if tick % 2 == 0 { "knead_0" } else { "knead_1" },
+            )
+        } else if st.curiosity > 0.70 {
+            (
+                if is_tr {
+                    "👀 Meraklı (Curious)"
+                } else {
+                    "👀 Curious"
+                },
+                if tick % 2 == 0 {
+                    "curious_0"
+                } else {
+                    "curious_1"
+                },
+            )
+        } else {
+            (
+                if is_tr {
+                    "✨ Neşeli (Happy)"
+                } else {
+                    "✨ Happy & Alert"
+                },
+                if tick % 2 == 0 { "idle_0" } else { "idle_1" },
+            )
+        }
+    } else {
+        (
+            if is_tr {
+                "✨ Dinleniyor (Idle)"
+            } else {
+                "✨ Resting (Idle)"
+            },
+            if tick % 2 == 0 { "idle_0" } else { "idle_1" },
+        )
+    }
+}
+
+#[cfg(windows)]
+unsafe fn draw_cat_sprite(
+    hdc: windows_sys::Win32::Graphics::Gdi::HDC,
+    x: i32,
+    y: i32,
+    state: &ControlCenterState,
+) {
+    use windows_sys::Win32::Graphics::Gdi::{
+        SetDIBitsToDevice, BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, RGBQUAD,
+    };
+
+    let (_, frame_name) = get_pet_mood_and_frame(state);
+
+    // Render 128x128 sprite (2x scale) with cream background #FFF8F0 (BGR 0x00F0F8FF -> RGB 0x00FFF8F0)
+    let (pixels, out_w, out_h) =
+        state
+            .sprite_sheet
+            .render_frame_bgra_scaled(frame_name, 2, Some(0x00FFF8F0));
+
+    let bmi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: out_w as i32,
+            biHeight: -(out_h as i32), // Top-down DIB
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB,
+            biSizeImage: 0,
+            biXPelsPerMeter: 0,
+            biYPelsPerMeter: 0,
+            biClrUsed: 0,
+            biClrImportant: 0,
+        },
+        bmiColors: [RGBQUAD {
+            rgbBlue: 0,
+            rgbGreen: 0,
+            rgbRed: 0,
+            rgbReserved: 0,
+        }],
+    };
+
+    SetDIBitsToDevice(
+        hdc,
+        x,
+        y,
+        out_w as u32,
+        out_h as u32,
+        0,
+        0,
+        0,
+        out_h as u32,
+        pixels.as_ptr() as *const _,
+        &bmi,
+        DIB_RGB_COLORS,
+    );
+}
+
+#[cfg(windows)]
 fn update_child_controls_visibility(state: &ControlCenterState) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE, SW_SHOW};
     unsafe {
@@ -1204,6 +2528,12 @@ fn update_child_controls_visibility(state: &ControlCenterState) {
         let is_rem = state.active_tab == TAB_REMINDERS;
         ShowWindow(state.hwnd_rem_title, if is_rem { SW_SHOW } else { SW_HIDE });
         ShowWindow(state.hwnd_rem_body, if is_rem { SW_SHOW } else { SW_HIDE });
+
+        let is_mem = state.active_tab == TAB_MEMORIES;
+        ShowWindow(
+            state.hwnd_mem_search,
+            if is_mem { SW_SHOW } else { SW_HIDE },
+        );
     }
 }
 
@@ -1247,11 +2577,20 @@ fn poll_host_updates(state: &mut ControlCenterState) {
                 state.reminders = rems;
             }
 
+            // Fetch Memories
+            if let Ok(IpcResponse::Memories(mems)) = client.request(&IpcRequest::ListMemories).await
+            {
+                state.memories = mems;
+            }
+
             // Fetch Settings
             if let Ok(IpcResponse::Settings(st)) = client.request(&IpcRequest::GetSettings).await {
                 if state.locale != st.locale {
                     state.locale = st.locale;
                     state.i18n.set_locale(st.locale);
+                }
+                if state.settings.cat_breed != st.cat_breed {
+                    state.sprite_sheet = MimiSpriteSheet::generate_for_breed(st.cat_breed);
                 }
                 state.settings = st.clone();
                 state.privacy_mode = st.privacy_mode;
@@ -1259,6 +2598,39 @@ fn poll_host_updates(state: &mut ControlCenterState) {
         } else {
             state.is_connected = false;
         }
+    });
+}
+
+fn send_chat_message_text(state: &mut ControlCenterState, text: String) {
+    let trimmed = text.trim().to_string();
+    if trimmed.is_empty() {
+        return;
+    }
+
+    state.chat_history.push(("User".into(), trimmed.clone()));
+
+    let req = IpcRequest::SendChatMessage {
+        conversation_id: Uuid::new_v4(),
+        content: trimmed,
+    };
+    let pipe = default_pipe_name();
+    let handle = state.runtime_handle.clone();
+    let locale = state.locale;
+
+    handle.block_on(async {
+        if let Ok(mut client) = IpcClient::connect(&pipe).await {
+            if let Ok(IpcResponse::ChatMessage(reply)) = client.request(&req).await {
+                state.chat_history.push(("Mimi".into(), reply.content));
+                return;
+            }
+        }
+        // Fallback response if offline
+        let fallback = if locale == SupportedLocale::TrTr {
+            "*mırıldanarak patisini sana uzatır* (Masaüstü Pet Bağlantısı)"
+        } else {
+            "*purrs softly and reaches out a paw* (Desktop Pet Companion)"
+        };
+        state.chat_history.push(("Mimi".into(), fallback.into()));
     });
 }
 
@@ -1274,46 +2646,37 @@ fn handle_send_chat(state: &mut ControlCenterState) {
                 let mut buf = vec![0u16; (len + 1) as usize];
                 GetWindowTextW(state.hwnd_chat_input, buf.as_mut_ptr(), len + 1);
                 let text = String::from_utf16_lossy(&buf[..len as usize]);
-                let trimmed = text.trim().to_string();
 
-                if !trimmed.is_empty() {
-                    // Clear input
-                    let empty_wide: Vec<u16> = OsStr::new("")
-                        .encode_wide()
-                        .chain(std::iter::once(0))
-                        .collect();
-                    SetWindowTextW(state.hwnd_chat_input, empty_wide.as_ptr());
+                // Clear input
+                let empty_wide: Vec<u16> = OsStr::new("")
+                    .encode_wide()
+                    .chain(std::iter::once(0))
+                    .collect();
+                SetWindowTextW(state.hwnd_chat_input, empty_wide.as_ptr());
 
-                    state.chat_history.push(("User".into(), trimmed.clone()));
-
-                    // Send to host via IPC
-                    let req = IpcRequest::SendChatMessage {
-                        conversation_id: Uuid::new_v4(),
-                        content: trimmed,
-                    };
-                    let pipe = default_pipe_name();
-                    let handle = state.runtime_handle.clone();
-                    let locale = state.locale;
-                    handle.block_on(async {
-                        if let Ok(mut client) = IpcClient::connect(&pipe).await {
-                            if let Ok(IpcResponse::ChatMessage(reply)) = client.request(&req).await
-                            {
-                                state.chat_history.push(("Mimi".into(), reply.content));
-                                return;
-                            }
-                        }
-                        // Offline companion fallback
-                        let fallback = if locale == SupportedLocale::TrTr {
-                            "*mırıldanarak patisini uzatır* (Masaüstü Pet Bağlantısı)"
-                        } else {
-                            "*purrs softly and stretches paw* (Desktop Pet Companion)"
-                        };
-                        state.chat_history.push(("Mimi".into(), fallback.into()));
-                    });
-                }
+                send_chat_message_text(state, text);
             }
         }
     }
+}
+
+fn schedule_quick_reminder(state: &mut ControlCenterState, title: &str, body: &str, minutes: i64) {
+    let req = IpcRequest::CreateReminder {
+        title: title.to_string(),
+        body: body.to_string(),
+        schedule_utc: chrono::Utc::now() + chrono::Duration::minutes(minutes),
+        recurrence: openpet_types::RecurrenceRule::Once,
+    };
+
+    let pipe = default_pipe_name();
+    let handle = state.runtime_handle.clone();
+    handle.block_on(async {
+        if let Ok(mut client) = IpcClient::connect(&pipe).await {
+            let _ = client.request(&req).await;
+        }
+    });
+
+    poll_host_updates(state);
 }
 
 fn handle_add_reminder(state: &mut ControlCenterState) {
@@ -1340,8 +2703,8 @@ fn handle_add_reminder(state: &mut ControlCenterState) {
                     .to_string();
 
                 let req = IpcRequest::CreateReminder {
-                    title: title.clone(),
-                    body: body.clone(),
+                    title,
+                    body,
                     schedule_utc: chrono::Utc::now() + chrono::Duration::minutes(15),
                     recurrence: openpet_types::RecurrenceRule::Once,
                 };
@@ -1441,7 +2804,7 @@ fn run_windows_gui_loop(initial_locale: SupportedLocale, initial_tab: usize) {
         }
 
         let hinstance = GetModuleHandleW(std::ptr::null());
-        let bg_brush = CreateSolidBrush(0x001E1E2E);
+        let bg_brush = CreateSolidBrush(COLOR_BG_CONTENT);
 
         let wnd_class = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -1460,7 +2823,7 @@ fn run_windows_gui_loop(initial_locale: SupportedLocale, initial_tab: usize) {
 
         RegisterClassExW(&wnd_class);
 
-        let win_title: Vec<u16> = OsStr::new("OpenPet Control Center")
+        let win_title: Vec<u16> = OsStr::new("OpenPet Control Center 🐾")
             .encode_wide()
             .chain(std::iter::once(0))
             .collect();
@@ -1470,8 +2833,8 @@ fn run_windows_gui_loop(initial_locale: SupportedLocale, initial_tab: usize) {
             class_name.as_ptr(),
             win_title.as_ptr(),
             WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-            150,
             120,
+            80,
             GUI_WIDTH,
             GUI_HEIGHT,
             std::ptr::null_mut(),
@@ -1491,31 +2854,31 @@ fn run_windows_gui_loop(initial_locale: SupportedLocale, initial_tab: usize) {
             .chain(std::iter::once(0))
             .collect();
 
-        // 1. Chat input edit control
+        // 1. Chat input edit control at (248, 525, 560, 38)
         let hwnd_chat_input = CreateWindowExW(
             0,
             edit_class.as_ptr(),
             std::ptr::null(),
             WS_CHILD | WS_BORDER | (ES_AUTOHSCROLL as u32),
-            230,
-            480,
-            430,
-            35,
+            248,
+            525,
+            560,
+            38,
             hwnd,
             ID_EDIT_CHAT as isize as _,
             hinstance,
             std::ptr::null_mut(),
         );
 
-        // 2. Reminder title input
+        // 2. Reminder title input at (345, 504, 340, 30)
         let hwnd_rem_title = CreateWindowExW(
             0,
             edit_class.as_ptr(),
             std::ptr::null(),
             WS_CHILD | WS_BORDER | (ES_AUTOHSCROLL as u32),
-            280,
-            420,
-            330,
+            345,
+            504,
+            340,
             30,
             hwnd,
             ID_EDIT_REM_TITLE as isize as _,
@@ -1523,15 +2886,15 @@ fn run_windows_gui_loop(initial_locale: SupportedLocale, initial_tab: usize) {
             std::ptr::null_mut(),
         );
 
-        // 3. Reminder body input
+        // 3. Reminder body input at (345, 544, 340, 30)
         let hwnd_rem_body = CreateWindowExW(
             0,
             edit_class.as_ptr(),
             std::ptr::null(),
             WS_CHILD | WS_BORDER | (ES_AUTOHSCROLL as u32),
-            280,
-            465,
-            330,
+            345,
+            544,
+            340,
             30,
             hwnd,
             ID_EDIT_REM_BODY as isize as _,
@@ -1539,7 +2902,7 @@ fn run_windows_gui_loop(initial_locale: SupportedLocale, initial_tab: usize) {
             std::ptr::null_mut(),
         );
 
-        // Set modern font on edit controls
+        // Set font on edit controls
         let font_name: Vec<u16> = OsStr::new("Segoe UI")
             .encode_wide()
             .chain(std::iter::once(0))
@@ -1580,23 +2943,56 @@ fn run_windows_gui_loop(initial_locale: SupportedLocale, initial_tab: usize) {
             1,
         );
 
+        // 4. Memory search input at (345, 73, 380, 28)
+        let hwnd_mem_search = CreateWindowExW(
+            0,
+            edit_class.as_ptr(),
+            std::ptr::null(),
+            WS_CHILD | WS_BORDER | (ES_AUTOHSCROLL as u32),
+            345,
+            73,
+            380,
+            28,
+            hwnd,
+            ID_EDIT_MEM_SEARCH as isize as _,
+            hinstance,
+            std::ptr::null_mut(),
+        );
+        windows_sys::Win32::UI::WindowsAndMessaging::SendMessageW(
+            hwnd_mem_search,
+            WM_SETFONT,
+            edit_font as usize,
+            1,
+        );
+
         // Initially show/hide edit controls based on initial_tab
         let cur_tab = initial_tab.min(TAB_SETTINGS);
         if cur_tab == TAB_CHAT {
             ShowWindow(hwnd_chat_input, SW_SHOW);
             ShowWindow(hwnd_rem_title, SW_HIDE);
             ShowWindow(hwnd_rem_body, SW_HIDE);
+            ShowWindow(hwnd_mem_search, SW_HIDE);
         } else if cur_tab == TAB_REMINDERS {
             ShowWindow(hwnd_chat_input, SW_HIDE);
             ShowWindow(hwnd_rem_title, SW_SHOW);
             ShowWindow(hwnd_rem_body, SW_SHOW);
+            ShowWindow(hwnd_mem_search, SW_HIDE);
+        } else if cur_tab == TAB_MEMORIES {
+            ShowWindow(hwnd_chat_input, SW_HIDE);
+            ShowWindow(hwnd_rem_title, SW_HIDE);
+            ShowWindow(hwnd_rem_body, SW_HIDE);
+            ShowWindow(hwnd_mem_search, SW_SHOW);
         } else {
             ShowWindow(hwnd_chat_input, SW_HIDE);
             ShowWindow(hwnd_rem_title, SW_HIDE);
             ShowWindow(hwnd_rem_body, SW_HIDE);
+            ShowWindow(hwnd_mem_search, SW_HIDE);
         }
 
         let i18n = I18nManager::new(initial_locale);
+        let default_breed = CatBreed::Tabby;
+        let sprite_sheet = MimiSpriteSheet::generate_for_breed(default_breed);
+
         let state = Box::new(Mutex::new(ControlCenterState {
             active_tab: cur_tab,
             locale: initial_locale,
@@ -1607,14 +3003,18 @@ fn run_windows_gui_loop(initial_locale: SupportedLocale, initial_tab: usize) {
             privacy_mode: false,
             chat_history: Vec::new(),
             reminders: Vec::new(),
+            memories: Vec::new(),
             settings: AppSettings::default(),
             status_feedback: String::new(),
             runtime_handle: handle,
             shutdown_flag: Arc::new(AtomicBool::new(false)),
+            sprite_sheet,
+            frame_counter: 0,
             hwnd_main: hwnd,
             hwnd_chat_input,
             hwnd_rem_title,
             hwnd_rem_body,
+            hwnd_mem_search,
         }));
 
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(state) as isize);
@@ -1626,10 +3026,10 @@ fn run_windows_gui_loop(initial_locale: SupportedLocale, initial_tab: usize) {
             poll_host_updates(&mut state_guard);
         }
 
-        // Set refresh timer (every 1 second)
-        SetTimer(hwnd, 1, 1000, None);
+        // Set animation & poll timer (fires every 500ms)
+        SetTimer(hwnd, 1, 500, None);
 
-        info!("OpenPet Control Center GUI window displayed.");
+        info!("OpenPet Control Center GUI window displayed (Cozy & Pastel theme).");
 
         // Message pump
         let mut msg: MSG = std::mem::zeroed();

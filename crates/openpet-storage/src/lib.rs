@@ -274,6 +274,18 @@ impl Database {
         Ok(())
     }
 
+    pub fn toggle_reminder(&self, id: Uuid) -> Result<bool, StorageError> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT enabled FROM reminders WHERE id = ?1")?;
+        let current: i32 = stmt.query_row(params![id.to_string()], |r| r.get(0))?;
+        let new_val = if current == 0 { 1 } else { 0 };
+        conn.execute(
+            "UPDATE reminders SET enabled = ?1 WHERE id = ?2",
+            params![new_val, id.to_string()],
+        )?;
+        Ok(new_val == 1)
+    }
+
     pub fn save_pet(&self, pet: &PetMetadata) -> Result<(), StorageError> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -360,5 +372,34 @@ mod tests {
         // Delete test
         db.delete_memory_fact(fact.id).unwrap();
         assert_eq!(db.list_memory_facts().unwrap().len(), 0);
+
+        // Reminder CRUD and toggle test
+        let rem = Reminder {
+            id: Uuid::new_v4(),
+            title: "Drink water".to_string(),
+            body: "Stay hydrated!".to_string(),
+            schedule: Utc::now(),
+            recurrence: RecurrenceRule::Once,
+            enabled: true,
+            created_at: Utc::now(),
+            last_fired_at: None,
+        };
+        db.insert_reminder(&rem).unwrap();
+        let rems = db.list_reminders().unwrap();
+        assert_eq!(rems.len(), 1);
+        assert!(rems[0].enabled);
+
+        let toggled = db.toggle_reminder(rem.id).unwrap();
+        assert!(!toggled);
+        let rems_after = db.list_reminders().unwrap();
+        assert!(!rems_after[0].enabled);
+
+        let toggled_again = db.toggle_reminder(rem.id).unwrap();
+        assert!(toggled_again);
+        let rems_after2 = db.list_reminders().unwrap();
+        assert!(rems_after2[0].enabled);
+
+        db.delete_reminder(rem.id).unwrap();
+        assert_eq!(db.list_reminders().unwrap().len(), 0);
     }
 }

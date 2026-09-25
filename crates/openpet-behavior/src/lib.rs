@@ -175,6 +175,7 @@ impl BehaviorEngine {
                 })
             }
             InteractionType::Feed => {
+                self.state.hunger += 0.35;
                 self.state.energy += 0.2;
                 self.state.mood += 0.15;
                 self.state.clamp_bounds();
@@ -183,6 +184,31 @@ impl BehaviorEngine {
                     behavior: BehaviorType::Happy,
                     loops: 2,
                     emote: Some(PetEmote::Heart),
+                    target_pos: None,
+                })
+            }
+            InteractionType::Water => {
+                self.state.thirst += 0.35;
+                self.state.mood += 0.12;
+                self.state.clamp_bounds();
+                self.current_behavior = BehaviorType::Happy;
+                Some(AnimationCommand {
+                    behavior: BehaviorType::Happy,
+                    loops: 2,
+                    emote: Some(PetEmote::Heart),
+                    target_pos: None,
+                })
+            }
+            InteractionType::Groom => {
+                self.state.hygiene += 0.35;
+                self.state.bond += 0.08;
+                self.state.mood += 0.15;
+                self.state.clamp_bounds();
+                self.current_behavior = BehaviorType::Pet;
+                Some(AnimationCommand {
+                    behavior: BehaviorType::Pet,
+                    loops: 2,
+                    emote: Some(PetEmote::Music),
                     target_pos: None,
                 })
             }
@@ -272,6 +298,34 @@ impl BehaviorEngine {
                     0.2
                 }
             }
+            BehaviorType::Purr => {
+                if s.bond > 0.6 && s.mood > 0.6 {
+                    0.7
+                } else {
+                    0.1
+                }
+            }
+            BehaviorType::Knead => {
+                if s.bond > 0.65 && s.sleepiness > 0.3 {
+                    0.65
+                } else {
+                    0.1
+                }
+            }
+            BehaviorType::Zoomies => {
+                if s.energy > 0.8 && s.boredom > 0.6 {
+                    0.8
+                } else {
+                    0.05
+                }
+            }
+            BehaviorType::Loaf => {
+                if s.energy < 0.5 && s.mood > 0.5 && s.sleepiness < 0.7 {
+                    0.6
+                } else {
+                    0.15
+                }
+            }
             BehaviorType::Stretch => 0.25,
             BehaviorType::Curious => s.curiosity * 0.7,
             BehaviorType::Idle => 0.4,
@@ -290,6 +344,10 @@ impl BehaviorEngine {
             BehaviorType::Sleep,
             BehaviorType::Stretch,
             BehaviorType::Curious,
+            BehaviorType::Purr,
+            BehaviorType::Knead,
+            BehaviorType::Zoomies,
+            BehaviorType::Loaf,
         ];
 
         let mut best_behavior = BehaviorType::Idle;
@@ -327,6 +385,12 @@ impl BehaviorEngine {
             self.state.boredom += 0.015 * dt;
             self.state.sleepiness += 0.008 * dt;
         }
+
+        // Realistic feline metabolic decay:
+        self.state.hunger -= 0.003 * dt;
+        self.state.thirst -= 0.005 * dt;
+        self.state.hygiene -= 0.002 * dt;
+
         self.state.clamp_bounds();
 
         // Behavior duration: every 4 to 8 seconds or if state requires immediate shift
@@ -438,5 +502,56 @@ mod tests {
         let initial_energy = engine.state().energy;
         engine.handle_interaction(InteractionType::Feed);
         assert!(engine.state().energy >= initial_energy);
+    }
+
+    #[test]
+    fn test_feline_care_interactions() {
+        let mut engine = BehaviorEngine::new_with_seed(456);
+
+        // Water adjusts thirst
+        let initial_thirst = engine.state().thirst;
+        let cmd = engine.handle_interaction(InteractionType::Water);
+        assert!(cmd.is_some());
+        assert!(engine.state().thirst >= initial_thirst);
+
+        // Groom adjusts hygiene
+        let initial_hygiene = engine.state().hygiene;
+        let cmd = engine.handle_interaction(InteractionType::Groom);
+        assert!(cmd.is_some());
+        assert!(engine.state().hygiene >= initial_hygiene);
+
+        // Play adjusts boredom
+        let initial_boredom = engine.state().boredom;
+        let cmd = engine.handle_interaction(InteractionType::Play);
+        assert!(cmd.is_some());
+        assert!(engine.state().boredom <= initial_boredom);
+    }
+
+    #[test]
+    fn test_feline_behavior_utility_and_locomotion() {
+        assert!(BehaviorType::Zoomies.is_locomotive());
+        assert!(BehaviorType::Walk.is_locomotive());
+        assert!(BehaviorType::Run.is_locomotive());
+        assert!(!BehaviorType::Loaf.is_locomotive());
+        assert!(!BehaviorType::Purr.is_locomotive());
+        assert!(!BehaviorType::Knead.is_locomotive());
+
+        let mut engine = BehaviorEngine::new_with_seed(789);
+        let best = engine.select_best_behavior();
+        assert!(matches!(
+            best,
+            BehaviorType::Idle
+                | BehaviorType::Sit
+                | BehaviorType::Walk
+                | BehaviorType::Run
+                | BehaviorType::Play
+                | BehaviorType::Sleep
+                | BehaviorType::Stretch
+                | BehaviorType::Curious
+                | BehaviorType::Purr
+                | BehaviorType::Knead
+                | BehaviorType::Zoomies
+                | BehaviorType::Loaf
+        ));
     }
 }

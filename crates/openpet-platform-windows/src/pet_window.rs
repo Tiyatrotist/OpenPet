@@ -15,19 +15,22 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use tracing::{error, info};
 
-pub const PET_WINDOW_WIDTH: i32 = 128;
-pub const PET_WINDOW_HEIGHT: i32 = 128;
+pub const PET_WINDOW_WIDTH: i32 = 160;
+pub const PET_WINDOW_HEIGHT: i32 = 170;
 pub const PET_CHROMA_KEY: u32 = 0x00FF00FF; // Magenta chroma key
 
 // Desktop Pet Direct Context Menu Command IDs
+pub const CMD_PET_DASHBOARD: usize = 3000;
 pub const CMD_PET_CHAT: usize = 3001;
 pub const CMD_PET_FEED: usize = 3002;
 pub const CMD_PET_PLAY: usize = 3003;
-pub const CMD_PET_HIGHFIVE: usize = 3004;
-pub const CMD_PET_SLEEP: usize = 3005;
-pub const CMD_PET_HIDE: usize = 3006;
-pub const CMD_PET_SETTINGS: usize = 3007;
-pub const CMD_PET_EXIT: usize = 3008;
+pub const CMD_PET_WATER: usize = 3004;
+pub const CMD_PET_GROOM: usize = 3005;
+pub const CMD_PET_HIGHFIVE: usize = 3006;
+pub const CMD_PET_SLEEP: usize = 3007;
+pub const CMD_PET_HIDE: usize = 3008;
+pub const CMD_PET_SETTINGS: usize = 3009;
+pub const CMD_PET_EXIT: usize = 3010;
 
 /// Commands that can be dispatched to the active pet window from host threads.
 #[derive(Debug)]
@@ -42,6 +45,8 @@ pub enum PetWindowCommand {
     AddChatMessage { sender: String, text: String },
     TriggerAction(InteractionType),
     PlayAnimation { name: String, duration_ticks: u32 },
+    SetBreed(openpet_types::CatBreed),
+    SetAlwaysOnTop(bool),
     Close,
 }
 
@@ -62,6 +67,8 @@ pub struct PetWindowState {
     pub privacy_mode: bool,
     pub locale: SupportedLocale,
     pub pet_mood_timer: u32,
+    pub speech_bubble_text: String,
+    pub speech_bubble_timer: u32,
     pub tray: Option<SystemTray>,
     pub chat_window: Option<FloatingChatWindow>,
     pub interaction_tx: Option<mpsc::Sender<InteractionType>>,
@@ -133,8 +140,8 @@ unsafe extern "system" fn pet_window_wndproc(
 
                     SetDIBitsToDevice(
                         mem_dc,
-                        0,
-                        0,
+                        16,
+                        42,
                         w as u32,
                         h as u32,
                         0,
@@ -145,6 +152,97 @@ unsafe extern "system" fn pet_window_wndproc(
                         &bmi,
                         DIB_RGB_COLORS,
                     );
+                }
+
+                // Render lightweight cute mini speech/thought bubble above the pet
+                if state.pet_visible
+                    && state.speech_bubble_timer > 0
+                    && !state.speech_bubble_text.is_empty()
+                {
+                    use windows_sys::Win32::Graphics::Gdi::{
+                        CreateFontW, CreatePen, DrawTextW, LineTo, MoveToEx, RoundRect, SetBkMode,
+                        SetTextColor, DT_CENTER, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, FW_BOLD,
+                        PS_SOLID, TRANSPARENT,
+                    };
+
+                    // Cream rounded speech bubble with warm peach border
+                    let bubble_brush = CreateSolidBrush(0x00F0F8FF); // #FFF8F0
+                    let bubble_pen = CreatePen(PS_SOLID, 1, 0x0076ABFF); // #FFAB76
+                    let old_p = SelectObject(mem_dc, bubble_pen);
+                    let old_b = SelectObject(mem_dc, bubble_brush);
+
+                    let bubble_rect = RECT {
+                        left: 8,
+                        top: 6,
+                        right: PET_WINDOW_WIDTH - 8,
+                        bottom: 38,
+                    };
+                    RoundRect(
+                        mem_dc,
+                        bubble_rect.left,
+                        bubble_rect.top,
+                        bubble_rect.right,
+                        bubble_rect.bottom,
+                        14,
+                        14,
+                    );
+
+                    // Speech bubble tail pointing towards cat's head
+                    let pt_x = PET_WINDOW_WIDTH / 2;
+                    MoveToEx(mem_dc, pt_x - 5, 37, std::ptr::null_mut());
+                    LineTo(mem_dc, pt_x, 42);
+                    LineTo(mem_dc, pt_x + 5, 37);
+
+                    SelectObject(mem_dc, old_b);
+                    SelectObject(mem_dc, old_p);
+                    DeleteObject(bubble_brush);
+                    DeleteObject(bubble_pen);
+
+                    // Draw speech text in warm cocoa brown
+                    let font_name: Vec<u16> = OsStr::new("Segoe UI")
+                        .encode_wide()
+                        .chain(std::iter::once(0))
+                        .collect();
+                    let font = CreateFontW(
+                        14,
+                        0,
+                        0,
+                        0,
+                        FW_BOLD as i32,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        font_name.as_ptr(),
+                    );
+                    let old_f = SelectObject(mem_dc, font);
+                    SetBkMode(mem_dc, TRANSPARENT as i32);
+                    SetTextColor(mem_dc, 0x003D3E4A); // Cocoa brown #4A3E3D
+
+                    let wide_text: Vec<u16> = OsStr::new(&state.speech_bubble_text)
+                        .encode_wide()
+                        .chain(std::iter::once(0))
+                        .collect();
+                    let mut text_rect = RECT {
+                        left: 10,
+                        top: 8,
+                        right: PET_WINDOW_WIDTH - 10,
+                        bottom: 36,
+                    };
+                    DrawTextW(
+                        mem_dc,
+                        wide_text.as_ptr(),
+                        -1,
+                        &mut text_rect,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX,
+                    );
+
+                    SelectObject(mem_dc, old_f);
+                    DeleteObject(font);
                 }
 
                 BitBlt(
@@ -241,8 +339,14 @@ unsafe extern "system" fn pet_window_wndproc(
                     if !state.has_moved_during_drag {
                         // User gently tapped/petted the cat!
                         info!("Pet interaction: User clicked/petted Mimi");
-                        state.current_frame_name = "pet_0".to_string();
-                        state.pet_mood_timer = 15; // Show happy pet reaction for 15 ticks (~1.5s)
+                        state.current_frame_name = "purr_0".to_string();
+                        state.pet_mood_timer = 20; // Show happy pet reaction for 20 ticks (~1.5s)
+                        state.speech_bubble_text = if state.locale == SupportedLocale::TrTr {
+                            "❤️ *mırrr mırrr*".into()
+                        } else {
+                            "❤️ *purr purr*".into()
+                        };
+                        state.speech_bubble_timer = 30;
                         InvalidateRect(hwnd, std::ptr::null(), 0);
 
                         if let Some(ref tx) = state.interaction_tx {
@@ -268,10 +372,8 @@ unsafe extern "system" fn pet_window_wndproc(
         WM_LBUTTONDBLCLK => {
             if !state_ptr.is_null() {
                 let state = &mut *state_ptr;
-                info!("Pet double-click: Toggling floating chat window");
-                if let Some(ref chat) = state.chat_window {
-                    chat.toggle_near_pet(state.pet_pos);
-                }
+                info!("Pet double-click: Launching Control Center dashboard");
+                launch_control_center(&[]);
                 if let Some(ref tx) = state.interaction_tx {
                     let _ = tx.send(InteractionType::DoubleClick);
                 }
@@ -310,6 +412,15 @@ unsafe extern "system" fn pet_window_wndproc(
                 let state = &mut *state_ptr;
                 state.frame_counter = state.frame_counter.wrapping_add(1);
 
+                // Speech bubble countdown
+                if state.speech_bubble_timer > 0 {
+                    state.speech_bubble_timer -= 1;
+                    if state.speech_bubble_timer == 0 {
+                        state.speech_bubble_text.clear();
+                        InvalidateRect(hwnd, std::ptr::null(), 0);
+                    }
+                }
+
                 // Temporary petting/action emotion countdown
                 if state.pet_mood_timer > 0 {
                     state.pet_mood_timer -= 1;
@@ -334,11 +445,27 @@ unsafe extern "system" fn pet_window_wndproc(
                             state.current_frame_name = next;
                             InvalidateRect(hwnd, std::ptr::null(), 0);
                         }
+                    } else if state.current_frame_name.starts_with("drink") {
+                        let step = (state.frame_counter / 3) % 2;
+                        let next = format!("drink_{}", step);
+                        if state.current_frame_name != next {
+                            state.current_frame_name = next;
+                            InvalidateRect(hwnd, std::ptr::null(), 0);
+                        }
+                    } else if state.current_frame_name.starts_with("purr") {
+                        let step = (state.frame_counter / 3) % 2;
+                        let next = format!("purr_{}", step);
+                        if state.current_frame_name != next {
+                            state.current_frame_name = next;
+                            InvalidateRect(hwnd, std::ptr::null(), 0);
+                        }
                     }
                     if state.pet_mood_timer == 0 {
                         state.current_frame_name = match state.current_behavior {
                             BehaviorType::Sleep => "sleep_0".to_string(),
                             BehaviorType::Sit => "sit_0".to_string(),
+                            BehaviorType::Purr => "purr_0".to_string(),
+                            BehaviorType::Loaf => "loaf_0".to_string(),
                             _ => "idle_0".to_string(),
                         };
                         InvalidateRect(hwnd, std::ptr::null(), 0);
@@ -351,8 +478,13 @@ unsafe extern "system" fn pet_window_wndproc(
                         let dist_sq = dx * dx + dy * dy;
 
                         if dist_sq > 16 {
-                            let step_x = (dx.clamp(-4, 4)) as i32;
-                            let step_y = (dy.clamp(-2, 2)) as i32;
+                            let speed = match state.current_behavior {
+                                BehaviorType::Zoomies => 10,
+                                BehaviorType::Run => 7,
+                                _ => 4,
+                            };
+                            let step_x = (dx.clamp(-speed, speed)) as i32;
+                            let step_y = (dy.clamp(-(speed / 2).max(2), (speed / 2).max(2))) as i32;
                             state.pet_pos.0 += step_x;
                             state.pet_pos.1 += step_y;
                             SetWindowPos(
@@ -364,7 +496,11 @@ unsafe extern "system" fn pet_window_wndproc(
                                 0,
                                 SWP_NOSIZE | SWP_NOZORDER,
                             );
-                            state.current_behavior = BehaviorType::Walk;
+                            if state.current_behavior != BehaviorType::Zoomies
+                                && state.current_behavior != BehaviorType::Run
+                            {
+                                state.current_behavior = BehaviorType::Walk;
+                            }
                         } else {
                             state.target_pos = None;
                             state.current_behavior = BehaviorType::Idle;
@@ -428,6 +564,28 @@ unsafe extern "system" fn pet_window_wndproc(
                                 "jump_1"
                             }
                         }
+                        BehaviorType::Purr => {
+                            if ((state.frame_counter / 3) & 1) == 0 {
+                                "purr_0"
+                            } else {
+                                "purr_1"
+                            }
+                        }
+                        BehaviorType::Knead => {
+                            if ((state.frame_counter / 3) & 1) == 0 {
+                                "knead_0"
+                            } else {
+                                "knead_1"
+                            }
+                        }
+                        BehaviorType::Zoomies => {
+                            if ((state.frame_counter / 2) & 1) == 0 {
+                                "zoomies_0"
+                            } else {
+                                "zoomies_1"
+                            }
+                        }
+                        BehaviorType::Loaf => "loaf_0",
                         BehaviorType::Surprised => "surprised_0",
                         _ => {
                             if ((state.frame_counter / 4) & 1) == 0 {
@@ -462,18 +620,28 @@ unsafe extern "system" fn pet_window_wndproc(
                 let rel_x = cursor_x - win_rect.left;
                 let rel_y = cursor_y - win_rect.top;
 
-                if (0..PET_WINDOW_WIDTH).contains(&rel_x) && (0..PET_WINDOW_HEIGHT).contains(&rel_y)
+                // Speech bubble clickable hit area
+                if state.speech_bubble_timer > 0
+                    && !state.speech_bubble_text.is_empty()
+                    && (6..=PET_WINDOW_WIDTH - 6).contains(&rel_x)
+                    && (4..=42).contains(&rel_y)
                 {
-                    let sprite_x = (rel_x / 2).clamp(0, 63) as usize;
-                    let sprite_y = (rel_y / 2).clamp(0, 63) as usize;
+                    return windows_sys::Win32::UI::WindowsAndMessaging::HTCLIENT as isize;
+                }
+
+                // Cat sprite relative area (offset 16, 42)
+                let sprite_rel_x = rel_x - 16;
+                let sprite_rel_y = rel_y - 42;
+                if (0..128).contains(&sprite_rel_x) && (0..128).contains(&sprite_rel_y) {
+                    let sprite_x = (sprite_rel_x / 2).clamp(0, 63) as usize;
+                    let sprite_y = (sprite_rel_y / 2).clamp(0, 63) as usize;
                     let frame = state.sprite_sheet.get_frame(&state.current_frame_name);
                     let px = frame.get_pixel(sprite_x, sprite_y);
                     if px[3] > 0 {
                         return windows_sys::Win32::UI::WindowsAndMessaging::HTCLIENT as isize;
-                    } else {
-                        return windows_sys::Win32::UI::WindowsAndMessaging::HTTRANSPARENT as isize;
                     }
                 }
+                return windows_sys::Win32::UI::WindowsAndMessaging::HTTRANSPARENT as isize;
             }
             windows_sys::Win32::UI::WindowsAndMessaging::HTCLIENT as isize
         }
@@ -518,7 +686,20 @@ unsafe fn show_pet_context_menu(
 
     let is_tr = state.locale == SupportedLocale::TrTr;
 
-    // 1. 💬 Sohbet Et (Chat)
+    // 1. 🐾 Kontrol Merkezi (Dashboard)
+    append_item(
+        hmenu,
+        CMD_PET_DASHBOARD,
+        if is_tr {
+            "🐾 Kontrol Merkezi (Dashboard)"
+        } else {
+            "🐾 Control Center (Dashboard)"
+        },
+    );
+
+    AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
+
+    // 2. 💬 Sohbet Et (Chat)
     append_item(
         hmenu,
         CMD_PET_CHAT,
@@ -529,18 +710,40 @@ unsafe fn show_pet_context_menu(
         },
     );
 
-    // 2. 🐟 Besle (Feed)
+    // 3. 🐟 Besle (Mama Ver)
     append_item(
         hmenu,
         CMD_PET_FEED,
         if is_tr {
-            "🐟 Besle (Balık Ver)"
+            "🐟 Besle (Mama Ver)"
         } else {
-            "🐟 Feed Fish Treat"
+            "🐟 Feed Treat"
         },
     );
 
-    // 3. 🧶 Oyna (Play)
+    // 4. 💧 Su Ver (Water)
+    append_item(
+        hmenu,
+        CMD_PET_WATER,
+        if is_tr {
+            "💧 Su Ver"
+        } else {
+            "💧 Give Water"
+        },
+    );
+
+    // 5. 🪮 Tara (Groom)
+    append_item(
+        hmenu,
+        CMD_PET_GROOM,
+        if is_tr {
+            "🪮 Tara (Tüy Bakımı)"
+        } else {
+            "🪮 Groom Fur"
+        },
+    );
+
+    // 6. 🧶 Oyna (Play)
     append_item(
         hmenu,
         CMD_PET_PLAY,
@@ -551,7 +754,7 @@ unsafe fn show_pet_context_menu(
         },
     );
 
-    // 4. 🖐️ Çak Bir Beşlik! (High Five)
+    // 7. 🖐️ Çak Bir Beşlik! (High Five)
     append_item(
         hmenu,
         CMD_PET_HIGHFIVE,
@@ -562,7 +765,7 @@ unsafe fn show_pet_context_menu(
         },
     );
 
-    // 5. 💤 Uyut / Uyandır (Sleep / Wake)
+    // 8. 💤 Uyut / Uyandır (Sleep / Wake)
     let is_sleeping = state.current_behavior == BehaviorType::Sleep;
     let sleep_label = if is_sleeping {
         if is_tr {
@@ -579,7 +782,7 @@ unsafe fn show_pet_context_menu(
 
     AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
 
-    // 6. 👁️ Peti Gizle (Hide)
+    // 9. 👁️ Peti Gizle (Hide)
     append_item(
         hmenu,
         CMD_PET_HIDE,
@@ -590,7 +793,7 @@ unsafe fn show_pet_context_menu(
         },
     );
 
-    // 7. ⚙️ Ayarlar (Settings)
+    // 10. ⚙️ Ayarlar (Settings)
     append_item(
         hmenu,
         CMD_PET_SETTINGS,
@@ -603,7 +806,7 @@ unsafe fn show_pet_context_menu(
 
     AppendMenuW(hmenu, MF_SEPARATOR, 0, std::ptr::null());
 
-    // 8. ❌ Çıkış (Exit)
+    // 11. ❌ Çıkış (Exit)
     append_item(
         hmenu,
         CMD_PET_EXIT,
@@ -628,25 +831,69 @@ unsafe fn show_pet_context_menu(
     PostMessageW(hwnd, WM_NULL, 0, 0);
 
     match selected {
+        CMD_PET_DASHBOARD => {
+            info!("Pet context menu: Opening Control Center dashboard");
+            launch_control_center(&[]);
+        }
         CMD_PET_CHAT => {
-            info!("Pet context menu: Opening chat bubble");
-            if let Some(ref chat) = state.chat_window {
-                chat.show_near_pet(state.pet_pos);
-            }
+            info!("Pet context menu: Opening chat dashboard");
+            launch_control_center(&["--tab", "chat"]);
         }
         CMD_PET_FEED => {
-            info!("Pet context menu: Feeding Mimi a fish treat");
+            info!("Pet context menu: Feeding Mimi");
             state.current_frame_name = "eat_0".to_string();
             state.pet_mood_timer = 25;
+            state.speech_bubble_text = if is_tr {
+                "🐟 Ham ham! Çok lezzetli!".into()
+            } else {
+                "🐟 Yum! Delicious treat!".into()
+            };
+            state.speech_bubble_timer = 35;
             InvalidateRect(hwnd, std::ptr::null(), 0);
             if let Some(ref tx) = state.interaction_tx {
                 let _ = tx.send(InteractionType::Feed);
+            }
+        }
+        CMD_PET_WATER => {
+            info!("Pet context menu: Giving water to Mimi");
+            state.current_frame_name = "drink_0".to_string();
+            state.pet_mood_timer = 25;
+            state.speech_bubble_text = if is_tr {
+                "💧 Gluk gluk! Teşekkürler!".into()
+            } else {
+                "💧 Refreshing water! Thanks!".into()
+            };
+            state.speech_bubble_timer = 35;
+            InvalidateRect(hwnd, std::ptr::null(), 0);
+            if let Some(ref tx) = state.interaction_tx {
+                let _ = tx.send(InteractionType::Water);
+            }
+        }
+        CMD_PET_GROOM => {
+            info!("Pet context menu: Grooming Mimi");
+            state.current_frame_name = "groom_0".to_string();
+            state.pet_mood_timer = 25;
+            state.speech_bubble_text = if is_tr {
+                "🪮 Mırrr... Pırıl pırıl oldum!".into()
+            } else {
+                "🪮 Purr... Groomed & shiny!".into()
+            };
+            state.speech_bubble_timer = 35;
+            InvalidateRect(hwnd, std::ptr::null(), 0);
+            if let Some(ref tx) = state.interaction_tx {
+                let _ = tx.send(InteractionType::Groom);
             }
         }
         CMD_PET_PLAY => {
             info!("Pet context menu: Playing with Mimi");
             state.current_frame_name = "jump_0".to_string();
             state.pet_mood_timer = 20;
+            state.speech_bubble_text = if is_tr {
+                "🧶 Yaşasın! Oyun zamanı!".into()
+            } else {
+                "🧶 Yay! Playtime!".into()
+            };
+            state.speech_bubble_timer = 35;
             InvalidateRect(hwnd, std::ptr::null(), 0);
             if let Some(ref tx) = state.interaction_tx {
                 let _ = tx.send(InteractionType::Play);
@@ -656,6 +903,12 @@ unsafe fn show_pet_context_menu(
             info!("Pet context menu: High five with Mimi!");
             state.current_frame_name = "jump_0".to_string();
             state.pet_mood_timer = 20;
+            state.speech_bubble_text = if is_tr {
+                "🖐️ Çak bir beşlik!".into()
+            } else {
+                "🖐️ High five!".into()
+            };
+            state.speech_bubble_timer = 35;
             InvalidateRect(hwnd, std::ptr::null(), 0);
             if let Some(ref tx) = state.interaction_tx {
                 let _ = tx.send(InteractionType::HighFive);
@@ -666,10 +919,22 @@ unsafe fn show_pet_context_menu(
                 info!("Pet context menu: Waking up Mimi");
                 state.current_behavior = BehaviorType::Idle;
                 state.current_frame_name = "idle_0".to_string();
+                state.speech_bubble_text = if is_tr {
+                    "☀️ Günaydın dostum!".into()
+                } else {
+                    "☀️ Good morning friend!".into()
+                };
+                state.speech_bubble_timer = 30;
             } else {
                 info!("Pet context menu: Putting Mimi to sleep");
                 state.current_behavior = BehaviorType::Sleep;
                 state.current_frame_name = "sleep_0".to_string();
+                state.speech_bubble_text = if is_tr {
+                    "💤 Zzz... İyi uykular...".into()
+                } else {
+                    "💤 Zzz... Sweet dreams...".into()
+                };
+                state.speech_bubble_timer = 30;
             }
             InvalidateRect(hwnd, std::ptr::null(), 0);
             if let Some(ref tx) = state.interaction_tx {
@@ -820,6 +1085,8 @@ pub fn spawn_desktop_pet_window(
     initial_pos: (i32, i32),
     initial_locale: SupportedLocale,
     initial_privacy: bool,
+    initial_breed: openpet_types::CatBreed,
+    initial_always_on_top: bool,
     interaction_tx: mpsc::Sender<InteractionType>,
     tray_action_tx: mpsc::Sender<TrayAction>,
     chat_tx: mpsc::Sender<String>,
@@ -834,6 +1101,8 @@ pub fn spawn_desktop_pet_window(
                 initial_pos,
                 initial_locale,
                 initial_privacy,
+                initial_breed,
+                initial_always_on_top,
                 interaction_tx,
                 tray_action_tx,
                 chat_tx,
@@ -847,6 +1116,8 @@ pub fn spawn_desktop_pet_window(
                     initial_pos,
                     initial_locale,
                     initial_privacy,
+                    initial_breed,
+                    initial_always_on_top,
                     interaction_tx,
                     tray_action_tx,
                     chat_tx,
@@ -864,6 +1135,8 @@ fn run_pet_window_loop(
     initial_pos: (i32, i32),
     initial_locale: SupportedLocale,
     initial_privacy: bool,
+    initial_breed: openpet_types::CatBreed,
+    initial_always_on_top: bool,
     interaction_tx: mpsc::Sender<InteractionType>,
     tray_action_tx: mpsc::Sender<TrayAction>,
     chat_tx: mpsc::Sender<String>,
@@ -937,8 +1210,13 @@ fn run_pet_window_loop(
             initial_pos.1
         };
 
+        let mut ex_style = WS_EX_LAYERED | WS_EX_TOOLWINDOW;
+        if initial_always_on_top {
+            ex_style |= WS_EX_TOPMOST;
+        }
+
         let hwnd = CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+            ex_style,
             class_name.as_ptr(),
             window_title.as_ptr(),
             WS_POPUP | WS_VISIBLE,
@@ -972,7 +1250,7 @@ fn run_pet_window_loop(
             },
         );
 
-        let sprite_sheet = MimiSpriteSheet::generate();
+        let sprite_sheet = MimiSpriteSheet::generate_for_breed(initial_breed);
         let chat_window = FloatingChatWindow::new(hinstance, initial_locale, chat_tx);
 
         let mut state = Box::new(PetWindowState {
@@ -991,6 +1269,8 @@ fn run_pet_window_loop(
             privacy_mode: initial_privacy,
             locale: initial_locale,
             pet_mood_timer: 0,
+            speech_bubble_text: String::new(),
+            speech_bubble_timer: 0,
             tray: Some(tray),
             chat_window: Some(chat_window),
             interaction_tx: Some(interaction_tx),
@@ -1021,6 +1301,10 @@ fn run_pet_window_loop(
                                 BehaviorType::Sleep => "sleep_0".to_string(),
                                 BehaviorType::Sit => "sit_0".to_string(),
                                 BehaviorType::Surprised => "surprised_0".to_string(),
+                                BehaviorType::Purr => "purr_0".to_string(),
+                                BehaviorType::Knead => "knead_0".to_string(),
+                                BehaviorType::Zoomies => "zoomies_0".to_string(),
+                                BehaviorType::Loaf => "loaf_0".to_string(),
                                 _ => "idle_0".to_string(),
                             };
                         }
@@ -1086,22 +1370,91 @@ fn run_pet_window_loop(
                         }
                     }
                     PetWindowCommand::TriggerAction(interaction) => {
+                        let is_tr = state.locale == SupportedLocale::TrTr;
                         match interaction {
                             InteractionType::Feed => {
                                 state.current_frame_name = "eat_0".to_string();
                                 state.pet_mood_timer = 25;
+                                state.speech_bubble_text = if is_tr {
+                                    "🐟 Ham ham! Çok lezzetli!".into()
+                                } else {
+                                    "🐟 Yum! Delicious treat!".into()
+                                };
+                                state.speech_bubble_timer = 35;
+                            }
+                            InteractionType::Water => {
+                                state.current_frame_name = "drink_0".to_string();
+                                state.pet_mood_timer = 25;
+                                state.speech_bubble_text = if is_tr {
+                                    "💧 Gluk gluk! Teşekkürler!".into()
+                                } else {
+                                    "💧 Refreshing water! Thanks!".into()
+                                };
+                                state.speech_bubble_timer = 35;
+                            }
+                            InteractionType::Groom => {
+                                state.current_frame_name = "groom_0".to_string();
+                                state.pet_mood_timer = 25;
+                                state.speech_bubble_text = if is_tr {
+                                    "🪮 Mırrr... Pırıl pırıl oldum!".into()
+                                } else {
+                                    "🪮 Purr... Groomed & shiny!".into()
+                                };
+                                state.speech_bubble_timer = 35;
+                            }
+                            InteractionType::Petting { .. } => {
+                                state.current_frame_name = "purr_0".to_string();
+                                state.pet_mood_timer = 20;
+                                state.speech_bubble_text = if is_tr {
+                                    "❤️ *mırrr mırrr*".into()
+                                } else {
+                                    "❤️ *purr purr*".into()
+                                };
+                                state.speech_bubble_timer = 30;
                             }
                             InteractionType::Play => {
                                 state.current_frame_name = "jump_0".to_string();
                                 state.pet_mood_timer = 20;
+                                state.speech_bubble_text = if is_tr {
+                                    "🧶 Yaşasın! Oyun zamanı!".into()
+                                } else {
+                                    "🧶 Yay! Playtime!".into()
+                                };
+                                state.speech_bubble_timer = 35;
                             }
                             InteractionType::HighFive => {
                                 state.current_frame_name = "jump_0".to_string();
                                 state.pet_mood_timer = 20;
+                                state.speech_bubble_text = if is_tr {
+                                    "🖐️ Çak bir beşlik!".into()
+                                } else {
+                                    "🖐️ High five!".into()
+                                };
+                                state.speech_bubble_timer = 35;
                             }
                             _ => {}
                         }
                         InvalidateRect(hwnd, std::ptr::null(), 0);
+                    }
+                    PetWindowCommand::SetBreed(breed) => {
+                        state.sprite_sheet = MimiSpriteSheet::generate_for_breed(breed);
+                        InvalidateRect(hwnd, std::ptr::null(), 0);
+                    }
+                    PetWindowCommand::SetAlwaysOnTop(top) => {
+                        use windows_sys::Win32::UI::WindowsAndMessaging::{
+                            SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE,
+                            SWP_NOSIZE,
+                        };
+                        let insert_after = if top { HWND_TOPMOST } else { HWND_NOTOPMOST };
+                        SetWindowPos(
+                            hwnd,
+                            insert_after,
+                            0,
+                            0,
+                            0,
+                            0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                        );
                     }
                     PetWindowCommand::PlayAnimation {
                         name,
@@ -1205,5 +1558,11 @@ mod tests {
             duration_ticks: 30,
         };
         assert!(matches!(anim_cmd, PetWindowCommand::PlayAnimation { .. }));
+
+        let breed_cmd = PetWindowCommand::SetBreed(openpet_types::CatBreed::Calico);
+        assert!(matches!(breed_cmd, PetWindowCommand::SetBreed(_)));
+
+        let on_top_cmd = PetWindowCommand::SetAlwaysOnTop(true);
+        assert!(matches!(on_top_cmd, PetWindowCommand::SetAlwaysOnTop(true)));
     }
 }

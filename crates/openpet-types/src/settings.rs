@@ -75,6 +75,9 @@ pub struct AppSettings {
     pub animation_quality: AnimationQuality,
     /// Respect user's Windows accessibility reduced motion preference
     pub reduced_motion: bool,
+    /// Active real cat breed appearance
+    #[serde(default)]
+    pub cat_breed: crate::pet::CatBreed,
     /// Update release train
     pub update_channel: UpdateChannel,
 }
@@ -92,6 +95,7 @@ impl Default for AppSettings {
             active_pet_id: PetId::default_pet(),
             animation_quality: AnimationQuality::High,
             reduced_motion: false,
+            cat_breed: crate::pet::CatBreed::Tabby,
             update_channel: UpdateChannel::Stable,
         }
     }

@@ -81,6 +81,9 @@ mod tests {
             translations: None,
             sounds: None,
             hashes: HashMap::new(),
+            breed: None,
+            asset_resolution: Some(openpet_types::AssetResolution::Low64),
+            supported_resolutions: vec![openpet_types::AssetResolution::Low64],
         };
 
         let manifest_file = temp_src.path().join("manifest.json");
@@ -184,6 +187,9 @@ mod tests {
             translations: None,
             sounds: None,
             hashes: HashMap::new(),
+            breed: None,
+            asset_resolution: Some(openpet_types::AssetResolution::Low64),
+            supported_resolutions: vec![openpet_types::AssetResolution::Low64],
         };
 
         let manifest_file = temp_src.path().join("manifest.json");

@@ -58,6 +58,7 @@ pub enum IpcRequest {
         recurrence: crate::reminder::RecurrenceRule,
     },
     DeleteReminder(Uuid),
+    ToggleReminder(Uuid),
     ConfirmToolCall {
         proposal_id: String,
         approved: bool,

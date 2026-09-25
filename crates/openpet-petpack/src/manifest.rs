@@ -42,6 +42,12 @@ pub struct PetPackManifest {
     pub translations: Option<HashMap<String, String>>,
     pub sounds: Option<Vec<String>>,
     pub hashes: HashMap<String, String>,
+    #[serde(default)]
+    pub breed: Option<openpet_types::CatBreed>,
+    #[serde(default)]
+    pub asset_resolution: Option<openpet_types::AssetResolution>,
+    #[serde(default)]
+    pub supported_resolutions: Vec<openpet_types::AssetResolution>,
 }
 
 /// Validates that a pet ID is safe against path traversal, reserved devices, and illegal filesystem characters.
